@@ -1,0 +1,81 @@
+# syntax=docker/dockerfile:1
+#
+# Imagem CPU-only. Usa o backend CPU do PyTorch (uv --torch-backend=cpu) para
+# evitar puxar as dependências CUDA completas (cuda-bindings/cuda-toolkit)
+# que o uv.lock traz por padrão, mantendo a imagem bem menor.
+#
+# Build:  docker build -f Dockerfile.cpu -t audio-to-text:cpu .
+# Run:    docker run --rm -p 8000:8000 -e HF_TOKEN=hf_xxx audio-to-text:cpu
+#         curl -X POST --data-binary @audio.mp3 http://localhost:8000/transcricao/txt -o resultado.txt
+#
+# Para rodar a CLI em vez do servidor HTTP (ex. num Job do k8s), sobrescreva
+# o entrypoint: docker run --rm --entrypoint python -v "$PWD/dados:/data" \
+#   audio-to-text:cpu transcribe.py /data/audio.mp3 --output /data/resultado
+
+########################
+# Builder
+########################
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+
+WORKDIR /app
+
+# Instala as dependências do lock, exceto torch/torchaudio e as libs CUDA
+# (que só existem porque a build "padrão" do torch depende delas).
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev \
+        --no-install-package torch \
+        --no-install-package torchaudio \
+        --no-install-package cuda-bindings \
+        --no-install-package cuda-toolkit \
+        --no-install-package cuda-pathfinder
+
+# Instala torch/torchaudio na variante CPU (resolve versões compatíveis
+# automaticamente via https://download.pytorch.org/whl/cpu).
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /app/.venv/bin/python \
+        --torch-backend=cpu \
+        torch torchaudio
+
+########################
+# Runtime
+########################
+FROM python:3.13-slim-bookworm AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid 1000 app \
+    && useradd --uid 1000 --gid app --create-home --shell /usr/sbin/nologin app
+
+WORKDIR /app
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    HOME=/home/app \
+    HF_HUB_CACHE=/home/app/.cache/huggingface \
+    PYTHONUNBUFFERED=1
+
+COPY --from=builder --chown=app:app /app/.venv /app/.venv
+COPY --chown=app:app transcribe.py server.py ./
+
+# Compatibilidade com OpenShift: a SCC `restricted` roda o container com um
+# UID arbitrário (não necessariamente 1000), sempre pertencente ao grupo 0.
+# Deixar /app e $HOME graváveis pelo grupo 0 evita falhas de permissão
+# (ex. ao baixar/cachear modelos em $HF_HUB_CACHE).
+RUN chgrp -R 0 /app /home/app \
+    && chmod -R g=u /app /home/app
+
+USER app
+
+# HF_TOKEN é opcional em runtime — injete via Secret do k8s para habilitar a
+# diarização; sem ele o servidor transcreve normalmente, sem identificar
+# speakers. WHISPER_MODEL/WHISPER_DEVICE/WHISPER_LANGUAGE também são
+# configuráveis via env var (veja README).
+EXPOSE 8000
+ENTRYPOINT ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
