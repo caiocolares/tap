@@ -4,11 +4,12 @@ import os
 import shutil
 import tempfile
 import threading
+import uuid
 from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
@@ -40,6 +41,7 @@ app = FastAPI(
 # instância; o modelo/pipeline ficam em cache e as inferências são serializadas.
 _lock = threading.Lock()
 _cache: dict = {}
+_jobs: dict = {}
 
 
 def _whisper_model():
@@ -61,28 +63,97 @@ def health():
 
 @app.post("/transcricao/{formato}")
 async def transcrever(formato: Literal["txt", "json"], request: Request):
-    audio_bytes = await request.body()
-    if not audio_bytes:
-        raise HTTPException(400, "Corpo da requisição vazio: envie o áudio (mp3) como body.")
-
-    output_path, media_type = await run_in_threadpool(_processar, audio_bytes, formato)
-    return FileResponse(
-        output_path,
-        media_type=media_type,
-        filename=output_path.name,
-        background=BackgroundTask(shutil.rmtree, output_path.parent, ignore_errors=True),
-    )
-
-
-def _processar(audio_bytes: bytes, formato: str) -> tuple[Path, str]:
     tmp_dir = Path(tempfile.mkdtemp(prefix="audio-to-text-"))
     input_path = tmp_dir / "audio.mp3"
-    input_path.write_bytes(audio_bytes)
 
+    try:
+        bytes_written = 0
+        with open(input_path, "wb") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
+                bytes_written += len(chunk)
+
+        if bytes_written == 0:
+            raise HTTPException(400, "Corpo da requisição vazio: envie o áudio (mp3) como body.")
+
+        output_path, media_type = await run_in_threadpool(_processar, input_path, formato, tmp_dir)
+        return FileResponse(
+            output_path,
+            media_type=media_type,
+            filename=output_path.name,
+            background=BackgroundTask(shutil.rmtree, tmp_dir, ignore_errors=True),
+        )
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
+
+@app.post("/async/transcricao/{formato}")
+async def transcrever_async(formato: Literal["txt", "json"], request: Request, background_tasks: BackgroundTasks):
+    tmp_dir = Path(tempfile.mkdtemp(prefix="audio-to-text-async-"))
+    input_path = tmp_dir / "audio.mp3"
+
+    try:
+        bytes_written = 0
+        with open(input_path, "wb") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
+                bytes_written += len(chunk)
+
+        if bytes_written == 0:
+            raise HTTPException(400, "Corpo da requisição vazio: envie o áudio (mp3) como body.")
+
+        job_id = str(uuid.uuid4())
+        _jobs[job_id] = {"status": "processing"}
+        background_tasks.add_task(_background_process, job_id, input_path, formato, tmp_dir)
+
+        return {"job_id": job_id, "status": "processing"}
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
+
+
+@app.get("/async/status/{job_id}")
+async def status_transcricao(job_id: str):
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job não encontrado")
+
+    if job["status"] == "processing":
+        return {"job_id": job_id, "status": "processing"}
+    elif job["status"] == "error":
+        raise HTTPException(500, f"Erro no processamento: {job.get('error')}")
+    elif job["status"] == "completed":
+        output_path = job["output_path"]
+        tmp_dir = job["tmp_dir"]
+        media_type = job["media_type"]
+
+        # O BackgroundTask apagará o temp_dir inteiro APÓS a resposta ser enviada
+        return FileResponse(
+            output_path,
+            media_type=media_type,
+            filename=output_path.name,
+            background=BackgroundTask(shutil.rmtree, tmp_dir, ignore_errors=True),
+        )
+
+
+async def _background_process(job_id: str, input_path: Path, formato: str, tmp_dir: Path):
+    try:
+        output_path, media_type = await run_in_threadpool(_processar, input_path, formato, tmp_dir)
+        _jobs[job_id] = {
+            "status": "completed",
+            "output_path": output_path,
+            "media_type": media_type,
+            "tmp_dir": tmp_dir
+        }
+    except Exception as e:
+        _jobs[job_id] = {"status": "error", "error": str(e)}
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _processar(input_path: Path, formato: str, tmp_dir: Path) -> tuple[Path, str]:
     try:
         wav_path = to_wav(input_path)
     except RuntimeError as exc:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
         raise HTTPException(422, str(exc)) from exc
 
     try:
