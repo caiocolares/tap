@@ -61,7 +61,7 @@ def load_diarization_pipeline(hf_token: str, device: str):
     from pyannote.audio import Pipeline
 
     pipeline = Pipeline.from_pretrained(
-        "pyannote/speaker-diarization-3.1", use_auth_token=hf_token
+        "pyannote/speaker-diarization-3.1", token=hf_token
     )
     if device == "cuda":
         pipeline.to(torch.device("cuda"))
@@ -70,9 +70,10 @@ def load_diarization_pipeline(hf_token: str, device: str):
 
 def diarize(pipeline, wav_path: Path) -> list[Turn]:
     diarization = pipeline(str(wav_path))
+    annotation = getattr(diarization, "speaker_diarization", diarization)
     turns = [
         Turn(start=turn.start, end=turn.end, speaker=speaker)
-        for turn, _, speaker in diarization.itertracks(yield_label=True)
+        for turn, _, speaker in annotation.itertracks(yield_label=True)
     ]
     turns.sort(key=lambda t: t.start)
     return turns
