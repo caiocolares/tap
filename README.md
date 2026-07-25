@@ -6,6 +6,9 @@
   ![Python](https://img.shields.io/badge/python-3.13-blue.svg)
   ![PyTorch](https://img.shields.io/badge/PyTorch-%23EE4C2C.svg?style=flat&logo=PyTorch&logoColor=white)
   ![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi)
+  ![Hugging Face](https://img.shields.io/badge/Hugging%20Face-FFD21E.svg?style=flat&logo=huggingface&logoColor=black)
+  ![uv](https://img.shields.io/badge/uv-DE5FE9.svg?style=flat&logo=uv&logoColor=white)
+  ![MinIO](https://img.shields.io/badge/MinIO-C72E49.svg?style=flat&logo=minio&logoColor=white)
   ![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=flat&logo=docker&logoColor=white)
 
   ### Transcrição tirada na pressão — sem espuma, sem ruído.
@@ -17,11 +20,14 @@ Transcreve um arquivo de áudio (mp3, wav, etc.) para texto usando [faster-whisp
 
 - [Escopo](#escopo)
 - [Setup](#setup)
+- [Testes](#testes)
 - [Uso via CLI](#uso-via-cli)
 - [Servidor HTTP](#servidor-http)
   - [Endpoints](#endpoints)
   - [API Assíncrona (Arquivos Grandes)](#api-assíncrona-arquivos-grandes)
+- [Performance: CPU vs GPU (Metal)](#performance-cpu-vs-gpu-metal)
 - [Docker](#docker)
+  - [Docker Compose (app + MinIO)](#docker-compose-app--minio)
   - [OpenShift (Knative Serving)](#openshift-knative-serving)
 - [Saída](#saída)
 - [Troubleshooting / FAQ](#troubleshooting--faq)
@@ -50,6 +56,13 @@ O projeto resolve um problema específico: dado um áudio de uma conversa com m�
      ```bash
      sudo apt update && sudo apt install ffmpeg
      ```
+   - **Windows** (via [winget](https://learn.microsoft.com/windows/package-manager/winget/) ou [Chocolatey](https://chocolatey.org/)):
+     ```powershell
+     winget install Gyan.FFmpeg
+     # ou
+     choco install ffmpeg
+     ```
+     Confirme que o `ffmpeg` ficou no `PATH` abrindo um novo terminal e rodando `ffmpeg -version`.
 
 2. Instale as dependências com [uv](https://docs.astral.sh/uv/) (cria o virtualenv `.venv` automaticamente):
    ```bash
@@ -64,6 +77,16 @@ O projeto resolve um problema específico: dado um áudio de uma conversa com m�
      - https://huggingface.co/pyannote/segmentation-3.0
    - Copie `.env.example` para `.env` e cole seu token em `HF_TOKEN`
 
+## Testes
+
+A suíte usa `pytest` + `pytest-cov`. Os modelos de ML (Whisper/Pyannote) e o `ffmpeg` são *stubados* nos testes — nenhum download de modelo, chamada de rede ou binário externo é necessário para rodá-la.
+
+```bash
+uv run pytest
+```
+
+Isso já roda com cobertura habilitada (configurado em `pyproject.toml`): um resumo aparece no terminal e um relatório HTML detalhado é gerado em `htmlcov/index.html`.
+
 ## Uso via CLI
 
 ```bash
@@ -76,7 +99,7 @@ Opções:
 uv run transcribe.py audio.mp3 \
   --model medium \        # tiny/base/small/medium/large-v3 (maior = mais preciso e mais lento)
   --language pt \         # omita para detecção automática
-  --device cpu \          # ou cuda, se tiver GPU NVIDIA
+  --device cpu \          # ou cuda (GPU NVIDIA) / mps (GPU Apple Silicon via Metal — só acelera a diarização)
   --output resultado      # gera resultado.txt e resultado.json
 ```
 
@@ -90,20 +113,67 @@ uv run transcribe.py audio.mp3 --no-diarization
 
 `server.py` expõe a mesma transcrição via API (FastAPI + uvicorn). O modelo Whisper e o pipeline de diarização são carregados uma vez e reaproveitados entre requisições — a primeira chamada é mais lenta (carrega o modelo), as seguintes já respondem com o modelo "quente".
 
-Rodando localmente:
+### Rodando por sistema operacional
+
+O comando base é sempre o mesmo; o que muda é como cada SO/terminal seta variáveis de ambiente para escolher o `WHISPER_DEVICE` (só necessário se quiser usar GPU — sem isso, roda em CPU).
+
+**macOS** (bash/zsh):
 
 ```bash
+# CPU (default)
+uv run uvicorn server:app --host 0.0.0.0 --port 8000
+
+# GPU via Metal (Apple Silicon) — só acelera a diarização, o Whisper continua em CPU (ver tabela abaixo)
+WHISPER_DEVICE=mps uv run uvicorn server:app --host 0.0.0.0 --port 8000
+```
+
+**Linux** (bash/zsh):
+
+```bash
+# CPU (default)
+uv run uvicorn server:app --host 0.0.0.0 --port 8000
+
+# GPU NVIDIA (requer driver CUDA instalado)
+WHISPER_DEVICE=cuda uv run uvicorn server:app --host 0.0.0.0 --port 8000
+```
+
+**Windows** (PowerShell):
+
+```powershell
+# CPU (default)
+uv run uvicorn server:app --host 0.0.0.0 --port 8000
+
+# GPU NVIDIA (requer driver CUDA instalado)
+$env:WHISPER_DEVICE = "cuda"
 uv run uvicorn server:app --host 0.0.0.0 --port 8000
 ```
+
+**Windows** (cmd.exe):
+
+```bat
+:: CPU (default)
+uv run uvicorn server:app --host 0.0.0.0 --port 8000
+
+:: GPU NVIDIA (requer driver CUDA instalado)
+set WHISPER_DEVICE=cuda
+uv run uvicorn server:app --host 0.0.0.0 --port 8000
+```
+
+> Alternativa a setar a variável na linha de comando: copie `.env.example` para `.env` e defina `WHISPER_DEVICE` lá — é lido automaticamente em qualquer SO, inclusive no Windows.
 
 Configuração via variáveis de ambiente (todas opcionais, também lidas do `.env`):
 
 | Variável | Default | Descrição |
 |---|---|---|
 | `WHISPER_MODEL` | `medium` | Tamanho do modelo Whisper (tiny/base/small/medium/large-v3) |
-| `WHISPER_DEVICE` | `cpu` | `cpu` ou `cuda` |
+| `WHISPER_DEVICE` | `cpu` | `cpu`, `cuda` (GPU NVIDIA) ou `mps` (GPU Apple Silicon via Metal — CTranslate2 não suporta MPS, então só a diarização roda na GPU; o Whisper continua em CPU/int8) |
 | `WHISPER_LANGUAGE` | detecção automática | Código do idioma (ex: `pt`) |
 | `HF_TOKEN` | — | Se definido, habilita a diarização; se ausente, o servidor transcreve normalmente sem identificar speakers |
+| `MINIO_ENDPOINT` | — | Endpoint do MinIO/S3 (ex: `localhost:9000`). Se ausente, o resultado dos jobs assíncronos fica só no disco local do processo |
+| `MINIO_ACCESS_KEY` | — | Access key do MinIO/S3 |
+| `MINIO_SECRET_KEY` | — | Secret key do MinIO/S3 |
+| `MINIO_BUCKET` | `audio-to-text` | Bucket onde o resultado dos jobs assíncronos é gravado (criado automaticamente se não existir) |
+| `MINIO_SECURE` | `false` | `true` para usar TLS (HTTPS) na conexão com o MinIO/S3 |
 
 ### Endpoints
 
@@ -147,7 +217,35 @@ Para evitar *timeouts* de conexão em áudios longos, o sistema suporta processa
    curl -JLO http://localhost:8000/async/status/{job_id}
    ```
 
+Se `MINIO_ENDPOINT` estiver configurado, o áudio original é gravado no bucket MinIO/S3 antes de iniciar o processamento, e o resultado também é gravado lá ao final — em vez de ficarem só no disco local do processo. Ver [Docker Compose (app + MinIO)](#docker-compose-app--minio).
+
 A documentação interativa (Swagger UI) completa fica disponível em `http://localhost:8000/docs`.
+
+## Performance: CPU vs GPU (Metal)
+
+Comparativo transcrevendo o mesmo áudio (~324KB) via `curl --data-binary` contra `/transcricao/txt`, rodando o servidor em macOS com CPU (default) vs `WHISPER_DEVICE=mps` (GPU Apple Silicon via Metal — acelera só a etapa de diarização, ver [Rodando por sistema operacional](#servidor-http)).
+
+**CPU** (`WHISPER_DEVICE=cpu`, default)
+
+![Performance CPU](./img/performance-cpu.png)
+
+```
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100  325k  100  1172  100  324k     15   4370  0:01:18  0:01:15  0:00:03   259
+```
+
+**GPU — Metal** (`WHISPER_DEVICE=mps`)
+
+![Performance GPU Metal](./img/performance-gpu.png)
+
+```
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100  325k  100  1172  100  324k     47  13375  0:00:24  0:00:24 --:--:--   257
+```
+
+Tempo total caiu de **1m18s para 24s** (~3,25x mais rápido) só acelerando a diarização via Metal — em áudios mais longos, onde a diarização pesa proporcionalmente mais, o ganho tende a ser ainda maior.
 
 ## Docker
 
@@ -189,6 +287,21 @@ Para rodar a CLI dentro do container em vez do servidor (por exemplo, num Job do
 docker run --rm --entrypoint python -v "$PWD/dados:/data" \
   audio-to-text:cpu transcribe.py /data/audio.mp3 --output /data/resultado
 ```
+
+### Docker Compose (app + MinIO)
+
+`docker-compose.yml` sobe o servidor (build de `Dockerfile.cpu`) junto com um container do [MinIO](https://min.io/) — object storage compatível com S3 usado para persistir o resultado dos jobs assíncronos (ver [API Assíncrona](#api-assíncrona-arquivos-grandes) e `TODO.md`, Nível 3).
+
+```bash
+cp .env.example .env   # se ainda não existir; preencha ao menos o HF_TOKEN
+docker compose up --build
+```
+
+- App: `http://localhost:8000` (mesmos endpoints de sempre)
+- Console web do MinIO: `http://localhost:9001` (login `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`, default `minioadmin`/`minioadmin`)
+- API S3 do MinIO: `http://localhost:9000`
+
+O `docker-compose.yml` já injeta `MINIO_ENDPOINT=minio:9000` no container do `app`, então o bucket (`MINIO_BUCKET`, default `audio-to-text`) é criado automaticamente na primeira execução. Para rodar sem MinIO (comportamento original, resultado só em disco local), use `docker run` como nos exemplos acima em vez do compose.
 
 ### OpenShift (Knative Serving)
 

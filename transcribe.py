@@ -43,11 +43,17 @@ def to_wav(input_path: Path) -> Path:
 
 
 def load_whisper_model(model_size: str, device: str):
-    """Carrega o modelo Whisper. Custoso — chame uma vez e reutilize entre transcrições."""
+    """Carrega o modelo Whisper. Custoso — chame uma vez e reutilize entre transcrições.
+
+    CTranslate2 (usado pelo faster-whisper) não suporta MPS — só cpu/cuda/auto.
+    Em macOS com WHISPER_DEVICE=mps, o whisper roda em CPU; quem de fato usa o
+    Metal é a diarização (pyannote/torch), via load_diarization_pipeline.
+    """
     from faster_whisper import WhisperModel
 
+    ct2_device = "cuda" if device == "cuda" else "cpu"
     compute_type = "float16" if device == "cuda" else "int8"
-    return WhisperModel(model_size, device=device, compute_type=compute_type)
+    return WhisperModel(model_size, device=ct2_device, compute_type=compute_type)
 
 
 def transcribe(model, wav_path: Path, language: str | None) -> list[Segment]:
@@ -63,8 +69,8 @@ def load_diarization_pipeline(hf_token: str, device: str):
     pipeline = Pipeline.from_pretrained(
         "pyannote/speaker-diarization-3.1", token=hf_token
     )
-    if device == "cuda":
-        pipeline.to(torch.device("cuda"))
+    if device in ("cuda", "mps"):
+        pipeline.to(torch.device(device))
     return pipeline
 
 

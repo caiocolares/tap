@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
+import storage
 from transcribe import (
     assign_speakers,
     diarize,
@@ -76,6 +77,9 @@ async def transcrever(formato: Literal["txt", "json"], request: Request):
         if bytes_written == 0:
             raise HTTPException(400, "Corpo da requisição vazio: envie o áudio (mp3) como body.")
 
+        if storage.STORAGE_ENABLED:
+            await run_in_threadpool(storage.upload_file, f"{uuid.uuid4()}/audio.mp3", input_path)
+
         output_path, media_type = await run_in_threadpool(_processar, input_path, formato, tmp_dir)
         return FileResponse(
             output_path,
@@ -123,9 +127,15 @@ async def status_transcricao(job_id: str):
     elif job["status"] == "error":
         raise HTTPException(500, f"Erro no processamento: {job.get('error')}")
     elif job["status"] == "completed":
-        output_path = job["output_path"]
-        tmp_dir = job["tmp_dir"]
         media_type = job["media_type"]
+
+        if storage.STORAGE_ENABLED:
+            tmp_dir = Path(tempfile.mkdtemp(prefix="audio-to-text-download-"))
+            output_path = tmp_dir / job["filename"]
+            await run_in_threadpool(storage.download_file, job["object_name"], output_path)
+        else:
+            output_path = job["output_path"]
+            tmp_dir = job["tmp_dir"]
 
         # O BackgroundTask apagará o temp_dir inteiro APÓS a resposta ser enviada
         return FileResponse(
@@ -138,13 +148,28 @@ async def status_transcricao(job_id: str):
 
 async def _background_process(job_id: str, input_path: Path, formato: str, tmp_dir: Path):
     try:
+        if storage.STORAGE_ENABLED:
+            await run_in_threadpool(storage.upload_file, f"{job_id}/audio.mp3", input_path)
+
         output_path, media_type = await run_in_threadpool(_processar, input_path, formato, tmp_dir)
-        _jobs[job_id] = {
-            "status": "completed",
-            "output_path": output_path,
-            "media_type": media_type,
-            "tmp_dir": tmp_dir
-        }
+
+        if storage.STORAGE_ENABLED:
+            object_name = f"{job_id}/{output_path.name}"
+            await run_in_threadpool(storage.upload_file, object_name, output_path)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            _jobs[job_id] = {
+                "status": "completed",
+                "object_name": object_name,
+                "filename": output_path.name,
+                "media_type": media_type,
+            }
+        else:
+            _jobs[job_id] = {
+                "status": "completed",
+                "output_path": output_path,
+                "media_type": media_type,
+                "tmp_dir": tmp_dir
+            }
     except Exception as e:
         _jobs[job_id] = {"status": "error", "error": str(e)}
         shutil.rmtree(tmp_dir, ignore_errors=True)

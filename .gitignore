@@ -10,3 +10,11 @@ wheels/
 .venv
 .claude/
 .env
+
+# Testes
+.coverage
+htmlcov/
+.pytest_cache/
+.idea
+.run
+.junie
