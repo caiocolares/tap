@@ -1,0 +1,131 @@
+# Axioma de contribuição do DTec OpenLabs (§8.3 da proposta):
+# nenhum repositório vai a público sem varredura de SEGREDOS, varredura de
+# VULNERABILIDADES EM DEPENDÊNCIAS e SBOM publicado.
+#
+# As três verificações abaixo são obrigatórias em qualquer repositório da
+# iniciativa. Ajuste caminhos e severidades, não remova etapas.
+#
+# ATENÇÃO — antes do primeiro uso: as imagens estão em `latest` para não fixar
+# uma versão inexistente. No primeiro run bem-sucedido, FIXE as tags (digest ou
+# versão exata). `latest` em gate de segurança é build não reprodutível.
+name: Segurança
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # varredura semanal do histórico completo, independente de atividade
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seguranca-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  segredos:
+    name: Segredos (histórico completo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 é obrigatório: a varredura precisa cobrir o HISTÓRICO,
+          # não só o estado atual. Repositório que já foi público pode ter segredo
+          # em commit antigo — e segredo que já esteve público é comprometido.
+          fetch-depth: 0
+
+      # Imagem alternativa, se a do ghcr não estiver acessível: zricethezav/gitleaks
+      - name: gitleaks
+        run: |
+          docker run --rm -v "${PWD}:/repo" ghcr.io/gitleaks/gitleaks:latest \
+            detect --source=/repo --log-opts=--all --redact --verbose --exit-code 1
+
+      - name: O que fazer se falhou
+        if: failure()
+        run: |
+          echo "::error::Possível segredo encontrado."
+          echo "1. REVOGUE e rotacione a credencial na origem — assuma que foi coletada."
+          echo "2. Avise o canal de segurança do repositório (SECURITY.md)."
+          echo "3. Só então trate o histórico, com apoio dos mantenedores."
+          echo "Falso positivo: registre a exceção em .gitleaks.toml, com justificativa."
+
+  dependencias:
+    name: Vulnerabilidades em dependências
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Gate: só vulnerabilidade barra o PR. Licença entra no passo seguinte, como
+      # relatório — achado de licença exige leitura humana, não bloqueio automático.
+      - name: Trivy — vulnerabilidades (bloqueia)
+        run: |
+          docker run --rm -v "${PWD}:/src" -w /src aquasec/trivy:latest \
+            filesystem \
+              --scanners vuln \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --exit-code 1 \
+              --no-progress \
+              .
+
+      - name: O que fazer se falhou
+        if: failure()
+        run: |
+          echo "::error::Dependência com vulnerabilidade ALTA ou CRÍTICA."
+          echo "Atualize a dependência. Se não houver correção publicada, registre a"
+          echo "exceção em .trivyignore com CVE, motivo e prazo de revisão — nunca sem prazo."
+
+      # Compatibilidade de licença das dependências com a licença do repositório.
+      # Informativo: o ponto que costuma reprovar não é biblioteca, é peso de modelo,
+      # fonte tipográfica e dataset — nada disso o scanner enxerga sozinho.
+      - name: Trivy — licenças (informativo)
+        if: always()
+        continue-on-error: true
+        run: |
+          docker run --rm -v "${PWD}:/src" -w /src aquasec/trivy:latest \
+            filesystem --scanners license --exit-code 0 --no-progress .
+
+  sbom:
+    name: SBOM (CycloneDX)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gerar SBOM com Syft
+        run: |
+          docker run --rm -v "${PWD}:/src" anchore/syft:latest \
+            /src -o cyclonedx-json > sbom.cdx.json
+          test -s sbom.cdx.json
+
+      - name: Publicar SBOM como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cdx.json
+          retention-days: 90
+
+      # Em release, o SBOM vai junto com os binários — é ele que permite a quem
+      # consome o projeto auditar a árvore de dependências.
+      - name: Anexar SBOM ao release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" sbom.cdx.json --clobber
+
+  # Recomendado, não obrigatório: SAST. A esteira interna da DTec já roda análise
+  # estática — manter aqui aproxima o padrão do OpenLabs do padrão de casa.
+  sast:
+    name: Análise estática (SAST)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      # Imagem legada, se necessário: returntocorp/semgrep
+      - name: Semgrep (regras padrão da comunidade)
+        run: |
+          docker run --rm -v "${PWD}:/src" -w /src semgrep/semgrep:latest \
+            semgrep scan --config=auto --error --quiet

@@ -1,0 +1,87 @@
+name: 🌱 Good first issue (mantenedores)
+description: Abrir uma tarefa de entrada para primeira contribuição — uso restrito a mantenedores
+title: "good first issue: "
+labels: ["good first issue", "help wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Formulário para **mantenedores**. Os cinco requisitos de uma issue de entrada
+        estão em [GOOD-FIRST-ISSUES.md](https://github.com/dtec-openlabs/tap/blob/main/GOOD-FIRST-ISSUES.md):
+        caminho apontado, critério verificável, sem decisão de arquitetura pendente,
+        cabe em uma sessão, e tem mantenedor responsável.
+
+        Issue de entrada sem dono é promessa que o projeto não cumpre.
+
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Contexto
+      description: O que existe hoje e por que precisa mudar. Duas ou três frases.
+    validations:
+      required: true
+
+  - type: textarea
+    id: o-que-fazer
+    attributes:
+      label: O que fazer
+      description: |
+        O que se espera da mudança, em passos. Não escreva o código pela pessoa —
+        mas não a faça adivinhar a intenção.
+    validations:
+      required: true
+
+  - type: textarea
+    id: onde-mexer
+    attributes:
+      label: Onde mexer
+      description: Arquivos e, se possível, funções. É o custo que a issue precisa remover.
+      placeholder: |
+        - `caminho/do/arquivo.py` — função `nome_da_funcao()`
+        - teste correspondente em `tests/test_arquivo.py`
+    validations:
+      required: true
+
+  - type: textarea
+    id: aceite
+    attributes:
+      label: Critério de aceite
+      description: Verificável. "Melhorar o tratamento de erro" não serve.
+      placeholder: |
+        - [ ] entrada vazia retorna 400 com a mensagem `arquivo vazio`
+        - [ ] teste cobrindo o caso
+        - [ ] `pytest -q` passando
+    validations:
+      required: true
+
+  - type: input
+    id: responsavel
+    attributes:
+      label: Mantenedor responsável
+      description: Quem responde dúvidas e revisa o PR, dentro da meta de 5 dias.
+      placeholder: "@usuario"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: esforco
+    attributes:
+      label: Esforço estimado (para quem não conhece o código)
+      options:
+        - Até 1 hora
+        - 1 a 4 horas
+        - Mais que isso — então quebre a issue antes de abrir
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: requisitos
+    attributes:
+      label: Requisitos da issue de entrada
+      options:
+        - label: Não depende de decisão de arquitetura pendente
+          required: true
+        - label: Não envolve credencial, ambiente externo ou pendência de segurança
+          required: true
+        - label: As instruções para rodar o projeto estão no README e continuam válidas
+          required: true

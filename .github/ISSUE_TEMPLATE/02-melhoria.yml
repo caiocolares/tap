@@ -1,0 +1,78 @@
+name: ✨ Melhoria ou nova funcionalidade
+description: Propor mudança de comportamento, funcionalidade nova ou melhoria técnica
+title: "feat: "
+labels: ["melhoria", "triagem"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Mudança grande começa aqui, não em um PR.** Nova dependência, mudança de
+        contrato público ou refatoração ampla precisam ser discutidas antes — é
+        frustrante para todos recusar um PR grande por decisão de arquitetura.
+
+  - type: textarea
+    id: problema
+    attributes:
+      label: Qual problema isso resolve
+      description: |
+        Descreva a dor, não a solução. Se não houver dor concreta, a proposta
+        provavelmente não entra.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposta
+    attributes:
+      label: Proposta
+      description: O que você sugere fazer.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Alternativas consideradas
+      description: |
+        Inclusive "não fazer nada". Saber o que você descartou e por quê acelera
+        muito a avaliação.
+
+  - type: dropdown
+    id: impacto
+    attributes:
+      label: Impacto na compatibilidade
+      options:
+        - Nenhum — adiciona sem alterar o que existe
+        - Muda comportamento existente
+        - Quebra contrato público (breaking change)
+        - Não sei avaliar
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencias
+    attributes:
+      label: Exige dependência nova?
+      description: |
+        Se sim, indique qual, a versão e a **licença**. Toda dependência precisa ser
+        open source — é critério de elegibilidade do DTec OpenLabs.
+
+  - type: dropdown
+    id: disponibilidade
+    attributes:
+      label: Você gostaria de implementar?
+      options:
+        - "Sim, quero implementar"
+        - "Sim, com mentoria de um mantenedor"
+        - "Não — estou apenas propondo"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmacoes
+    attributes:
+      label: Confirmações
+      options:
+        - label: Verifiquei que não há issue ou discussão aberta com a mesma proposta
+          required: true
+        - label: Li o [Código de Conduta](https://github.com/dtec-openlabs/tap/blob/main/CODE_OF_CONDUCT.md)
+          required: true

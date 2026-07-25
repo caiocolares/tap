@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Vulnerabilidade de segurança
+    url: https://github.com/dtec-openlabs/tap/security/advisories/new
+    about: Não abra issue pública. Use o relato privado — política e prazos em SECURITY.md.
+  - name: 💬 Dúvida, ideia ou discussão técnica
+    url: https://github.com/dtec-openlabs/tap/discussions
+    about: Para perguntar antes de propor. Mudança grande começa por discussão, não por PR.
+  - name: 🎓 Sou aluno da Unifor e quero começar
+    url: https://github.com/dtec-openlabs/tap/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22
+    about: Comece pelas issues good first issue — escopadas para a primeira contribuição, com mentoria.

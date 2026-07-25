@@ -1,0 +1,52 @@
+# Atualização automatizada de dependências — o lado preventivo do axioma de §8.3.
+# A varredura (seguranca.yml) avisa que a dependência está vulnerável; o Dependabot
+# abre o PR que resolve.
+#
+# `github-actions` vale para qualquer projeto e fica habilitado por padrão.
+# Descomente o ecossistema da stack do projeto.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    labels: ["dependências"]
+
+  # - package-ecosystem: pip
+  #   directory: "/"
+  #   schedule:
+  #     interval: weekly
+  #   commit-message:
+  #     prefix: "build"
+  #   labels: ["dependências"]
+  #   groups:
+  #     dev:
+  #       dependency-type: development
+
+  # - package-ecosystem: npm
+  #   directory: "/"
+  #   schedule:
+  #     interval: weekly
+  #   commit-message:
+  #     prefix: "build"
+  #   labels: ["dependências"]
+
+  # - package-ecosystem: gradle
+  #   directory: "/"
+  #   schedule:
+  #     interval: weekly
+  #   commit-message:
+  #     prefix: "build"
+  #   labels: ["dependências"]
+
+  # - package-ecosystem: docker
+  #   directory: "/"
+  #   schedule:
+  #     interval: weekly
+  #   commit-message:
+  #     prefix: "build"
+  #   labels: ["dependências"]

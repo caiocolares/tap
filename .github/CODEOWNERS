@@ -1,0 +1,20 @@
+# Soberania de merge do DTec OpenLabs (axioma de §8.3).
+#
+# Qualquer pessoa contribui, revisa e sugere. A aprovação final na branch
+# principal é de integrantes ativos da DTec com credencial @unifor.br.
+# Este arquivo sozinho não garante nada: ele só tem efeito com a regra de
+# proteção de branch exigindo "Require review from Code Owners".
+# O checklist de configuração está no README do kit (openlab/README.md).
+
+# Padrão: tudo passa pelos mantenedores
+*                           @dtec-openlabs/mantenedores
+
+# Governança e segurança: mudança aqui altera o contrato da iniciativa,
+# não apenas o código deste repositório.
+/LICENSE                    @dtec-openlabs/mantenedores
+/SECURITY.md                @dtec-openlabs/mantenedores
+/CODE_OF_CONDUCT.md         @dtec-openlabs/mantenedores
+/CONTRIBUTING.md            @dtec-openlabs/mantenedores
+/DCO                        @dtec-openlabs/mantenedores
+/.github/                   @dtec-openlabs/mantenedores
+/.github/workflows/         @dtec-openlabs/mantenedores

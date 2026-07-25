@@ -31,6 +31,7 @@ Transcreve um arquivo de áudio (mp3, wav, etc.) para texto usando [faster-whisp
   - [OpenShift (Knative Serving)](#openshift-knative-serving)
 - [Saída](#saída)
 - [Troubleshooting / FAQ](#troubleshooting--faq)
+- [Contribuidores](#contribuidores)
 
 ## Escopo
 
@@ -353,3 +354,40 @@ Mesmo formato tanto na CLI (`<nome>.txt`/`<nome>.json`) quanto no servidor HTTP 
 **3. Falta de memória na GPU (CUDA OOM - Out of Memory)**
 - **Sintoma**: Erro `RuntimeError: CUDA out of memory` ao tentar transcrever um áudio via servidor ou CLI.
 - **Solução**: O modelo Whisper tem variações de tamanho. O `large-v3` ou mesmo o `medium` podem consumir mais VRAM do que a sua placa gráfica possui. Tente utilizar um modelo menor passando a opção `--model small` ou `--model base` na CLI, ou alterando a variável de ambiente `WHISPER_MODEL=small` no servidor.
+
+## Contribuidores
+
+Obrigado a todas as pessoas que já contribuíram com o T.A.P.! 🍺
+
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/caiocolares">
+        <img src="https://github.com/caiocolares.png" width="100" alt="Caio Colares"><br>
+        <sub><b>Caio Colares</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/rafaelsreis">
+        <img src="https://github.com/rafaelsreis.png" width="100" alt="Rafael Reis"><br>
+        <sub><b>Rafael Reis</b></sub>
+      </a>
+    </td>
+  </tr>
+</table>
+
+Quer aparecer nessa lista? Veja o [CONTRIBUTING.md](./CONTRIBUTING.md) e as [good first issues](./GOOD-FIRST-ISSUES.md).
+
+---
+
+<div align="center">
+
+### DTec OpenLabs
+
+*Inovação aberta, soluções reais e engenharia na prática.*
+
+Feito com 🍺 por [Caio Colares](https://github.com/caiocolares)
+
+[Reportar um problema](https://github.com/caiocolares/tap/issues) · [faster-whisper](https://github.com/SYSTRAN/faster-whisper) · [pyannote.audio](https://github.com/pyannote/pyannote-audio)
+
+</div>

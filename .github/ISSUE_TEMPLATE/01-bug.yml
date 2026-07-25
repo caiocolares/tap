@@ -1,0 +1,79 @@
+name: 🐛 Bug
+description: Relatar comportamento incorreto ou inesperado
+title: "bug: "
+labels: ["bug", "triagem"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Antes de abrir: confira se já não existe issue aberta para o mesmo caso.
+
+        **Encontrou vulnerabilidade de segurança? Não use este formulário** — use o
+        [relato privado](https://github.com/dtec-openlabs/tap/security/advisories/new).
+
+  - type: textarea
+    id: descricao
+    attributes:
+      label: O que acontece
+      description: O comportamento observado, em uma ou duas frases.
+    validations:
+      required: true
+
+  - type: textarea
+    id: esperado
+    attributes:
+      label: O que você esperava que acontecesse
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducao
+    attributes:
+      label: Passos para reproduzir
+      description: |
+        Passo a passo numerado. Bug que não reproduzimos não é corrigido — é o campo
+        mais importante deste formulário.
+      placeholder: |
+        1. Rodar `...`
+        2. Enviar a entrada `...`
+        3. Observar `...`
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidencia
+    attributes:
+      label: Log, erro ou captura de tela
+      description: |
+        Cole o erro completo, inclusive o *stack trace*.
+        **Remova credenciais, tokens e dados pessoais antes de colar.**
+      render: shell
+
+  - type: input
+    id: versao
+    attributes:
+      label: Versão, tag ou commit
+      placeholder: "v1.2.0 · ou o SHA do commit"
+    validations:
+      required: true
+
+  - type: textarea
+    id: ambiente
+    attributes:
+      label: Ambiente
+      placeholder: |
+        SO:
+        Runtime/linguagem e versão:
+        Forma de execução: local · contêiner · cluster
+
+  - type: checkboxes
+    id: confirmacoes
+    attributes:
+      label: Confirmações
+      options:
+        - label: Verifiquei que não há issue aberta para o mesmo problema
+          required: true
+        - label: Removi credenciais e dados sensíveis do que colei acima
+          required: true
+        - label: Li o [Código de Conduta](https://github.com/dtec-openlabs/tap/blob/main/CODE_OF_CONDUCT.md)
+          required: true
