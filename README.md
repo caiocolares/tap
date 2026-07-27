@@ -180,11 +180,13 @@ Configuração via variáveis de ambiente (todas opcionais, também lidas do `.e
 | `SMTP_USER` | — | Usuário para autenticação SMTP |
 | `SMTP_PASSWORD` | — | Senha para autenticação SMTP |
 | `SMTP_FROM` | `nao-responda@exemplo.com` | Endereço de remetente (From) para os e-mails enviados |
+| `JWT_SECRET` | `super-secreto-mudar-em-producao` | Chave secreta usada para assinar os tokens de autorização JWT |
 
 ### Endpoints
 
 - `GET /health` — liveness/readiness check, retorna `{"status": "ok"}`.
-- `POST /transcricao/{formato}` — recebe o áudio (mp3, wav, etc.) como corpo bruto da requisição e devolve o arquivo com a transcrição. `formato` é `txt` ou `json` (qualquer outro valor retorna `422`).
+- `POST /auth/request-code` — recebe `{"email": "seu@email.com"}` em JSON e despacha um código de acesso (Token JWT) válido por 24h para o e-mail informado.
+- `POST /transcricao/{formato}` — recebe o áudio (mp3, wav, etc.) como corpo bruto da requisição e devolve o arquivo com a transcrição. **Exige cabeçalho `Authorization: Bearer <TOKEN>`**. `formato` é `txt` ou `json`.
 
 Exemplo com `curl`:
 
@@ -193,6 +195,7 @@ Exemplo com `curl`:
 curl -X POST \
   --data-binary @audio.mp3 \
   -H "Content-Type: audio/mpeg" \
+  -H "Authorization: Bearer <COLE_SEU_TOKEN_AQUI>" \
   http://localhost:8000/transcricao/txt \
   -o resultado.txt
 
@@ -200,6 +203,7 @@ curl -X POST \
 curl -X POST \
   --data-binary @audio.mp3 \
   -H "Content-Type: audio/mpeg" \
+  -H "Authorization: Bearer <COLE_SEU_TOKEN_AQUI>" \
   http://localhost:8000/transcricao/json \
   -o resultado.json
 ```
@@ -211,10 +215,11 @@ curl -X POST \
 Para evitar *timeouts* de conexão em áudios longos, o sistema suporta processamento assíncrono (modelo de *Polling*). O servidor agenda o trabalho em *background* e devolve um `job_id` imediatamente.
 
 1. **Despachar o Job**:
-   Você pode informar opcionalmente o parâmetro `?email=` na URL. Caso configurado o servidor SMTP, a transcrição final será enviada como anexo para o e-mail informado.
+   Como a rota exige autenticação JWT (que já contém o seu e-mail embutido de forma segura), a API enviará a transcrição final como anexo para o seu e-mail automaticamente.
    ```bash
    curl -X POST --data-binary @audio.mp3 -H "Content-Type: audio/mpeg" \
-     "http://localhost:8000/async/transcricao/txt?email=seu.email@exemplo.com"
+     -H "Authorization: Bearer <COLE_SEU_TOKEN_AQUI>" \
+     http://localhost:8000/async/transcricao/txt
    ```
    *Retorno*: `{"job_id": "8f3...a9b", "status": "processing"}`
 
