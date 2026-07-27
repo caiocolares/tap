@@ -19,7 +19,10 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-nao-responda@exemplo.com}
       JWT_SECRET: ${JWT_SECRET:-super-secreto-mudar-em-producao}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}
     depends_on:
+      rabbitmq:
+        condition: service_healthy
       minio:
         condition: service_healthy
 
@@ -40,5 +43,37 @@ services:
       timeout: 5s
       retries: 5
 
+  rabbitmq:
+    image: docker.io/rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_ERLANG_COOKIE: "secret_cookie"
+      HOME: /tmp
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    entrypoint: ["python", "worker.py"]
+    env_file:
+      - .env
+    environment:
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      app:
+        condition: service_started
+
 volumes:
   minio_data:
+  rabbitmq_data:

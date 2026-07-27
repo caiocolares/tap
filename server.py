@@ -19,6 +19,8 @@ from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
 from fastapi import Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import pika
+import json
 
 import storage
 import mail
@@ -35,7 +37,7 @@ from transcribe import (
 
 load_dotenv()
 
-MODEL_SIZE = os.environ.get("WHISPER_MODEL", "medium")
+MODEL_SIZE = os.environ.get("WHISPER_MODEL", "small")
 DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 LANGUAGE = os.environ.get("WHISPER_LANGUAGE") or None
 HF_TOKEN = os.environ.get("HF_TOKEN")
@@ -50,8 +52,6 @@ app = FastAPI(
 # instância; o modelo/pipeline ficam em cache e as inferências são serializadas.
 _lock = threading.Lock()
 _cache: dict = {}
-_jobs: dict = {}
-
 
 def _whisper_model():
     if "whisper" not in _cache:
@@ -127,7 +127,10 @@ async def transcrever(formato: Literal["txt", "json"], request: Request, email: 
         raise
 
 @app.post("/async/transcricao/{formato}")
-async def transcrever_async(formato: Literal["txt", "json"], request: Request, background_tasks: BackgroundTasks, email: str = Depends(get_current_email)):
+async def transcrever_async(formato: Literal["txt", "json"], request: Request, email: str = Depends(get_current_email)):
+    if not storage.STORAGE_ENABLED:
+        raise HTTPException(500, "O processamento assíncrono requer configuração do MinIO.")
+
     tmp_dir = Path(tempfile.mkdtemp(prefix="audio-to-text-async-"))
     input_path = tmp_dir / "audio.mp3"
 
@@ -142,77 +145,86 @@ async def transcrever_async(formato: Literal["txt", "json"], request: Request, b
             raise HTTPException(400, "Corpo da requisição vazio: envie o áudio (mp3) como body.")
 
         job_id = str(uuid.uuid4())
-        _jobs[job_id] = {"status": "processing"}
-        background_tasks.add_task(_background_process, job_id, input_path, formato, tmp_dir, email)
+        await run_in_threadpool(storage.upload_file, f"{job_id}/audio.mp3", input_path)
 
+        def publish_message():
+            url = os.environ.get("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
+            connection = pika.BlockingConnection(pika.URLParameters(url))
+            channel = connection.channel()
+            channel.queue_declare(queue='transcription_jobs', durable=True)
+            payload = {"job_id": job_id, "formato": formato, "email": email}
+            channel.basic_publish(
+                exchange='',
+                routing_key='transcription_jobs',
+                body=json.dumps(payload),
+                properties=pika.BasicProperties(delivery_mode=pika.spec.PERSISTENT_DELIVERY_MODE)
+            )
+            connection.close()
+
+        await run_in_threadpool(publish_message)
         return {"job_id": job_id, "status": "processing"}
-    except Exception:
+    finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise
 
 
 @app.get("/async/status/{job_id}")
 async def status_transcricao(job_id: str):
-    job = _jobs.get(job_id)
-    if not job:
+    if not storage.STORAGE_ENABLED:
+        raise HTTPException(500, "MinIO não configurado.")
+
+    has_json = await run_in_threadpool(storage.file_exists, f"{job_id}/transcricao.json")
+    has_txt = await run_in_threadpool(storage.file_exists, f"{job_id}/transcricao.txt")
+    
+    if has_json:
+        formato, media_type = "json", "application/json"
+    elif has_txt:
+        formato, media_type = "txt", "text/plain; charset=utf-8"
+    else:
+        has_audio = await run_in_threadpool(storage.file_exists, f"{job_id}/audio.mp3")
+        if has_audio:
+            return {"job_id": job_id, "status": "processing"}
         raise HTTPException(404, "Job não encontrado")
 
-    if job["status"] == "processing":
-        return {"job_id": job_id, "status": "processing"}
-    elif job["status"] == "error":
-        raise HTTPException(500, f"Erro no processamento: {job.get('error')}")
-    elif job["status"] == "completed":
-        media_type = job["media_type"]
+    tmp_dir = Path(tempfile.mkdtemp(prefix="audio-to-text-download-"))
+    output_path = tmp_dir / f"transcricao.{formato}"
+    await run_in_threadpool(storage.download_file, f"{job_id}/transcricao.{formato}", output_path)
 
-        if storage.STORAGE_ENABLED:
-            tmp_dir = Path(tempfile.mkdtemp(prefix="audio-to-text-download-"))
-            output_path = tmp_dir / job["filename"]
-            await run_in_threadpool(storage.download_file, job["object_name"], output_path)
-        else:
-            output_path = job["output_path"]
-            tmp_dir = job["tmp_dir"]
-
-        # O BackgroundTask apagará o temp_dir inteiro APÓS a resposta ser enviada
-        return FileResponse(
-            output_path,
-            media_type=media_type,
-            filename=output_path.name,
-            background=BackgroundTask(shutil.rmtree, tmp_dir, ignore_errors=True),
-        )
+    return FileResponse(
+        output_path,
+        media_type=media_type,
+        filename=output_path.name,
+        background=BackgroundTask(shutil.rmtree, tmp_dir, ignore_errors=True),
+    )
 
 
-async def _background_process(job_id: str, input_path: Path, formato: str, tmp_dir: Path, email: str | None = None):
+class WorkerPayload(BaseModel):
+    job_id: str
+    formato: str
+    email: str | None = None
+
+@app.post("/internal/worker")
+async def process_job(payload: WorkerPayload):
+    if not storage.STORAGE_ENABLED:
+        raise HTTPException(500, "MinIO não configurado.")
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="audio-to-text-worker-"))
+    input_path = tmp_dir / "audio.mp3"
+    
     try:
-        if storage.STORAGE_ENABLED:
-            await run_in_threadpool(storage.upload_file, f"{job_id}/audio.mp3", input_path)
-
-        output_path, media_type = await run_in_threadpool(_processar, input_path, formato, tmp_dir)
-
-        if email:
+        await run_in_threadpool(storage.download_file, f"{payload.job_id}/audio.mp3", input_path)
+        output_path, media_type = await run_in_threadpool(_processar, input_path, payload.formato, tmp_dir)
+        
+        object_name = f"{payload.job_id}/{output_path.name}"
+        await run_in_threadpool(storage.upload_file, object_name, output_path)
+        
+        if payload.email:
             try:
-                await run_in_threadpool(mail.send_transcription_email, email, output_path)
-            except Exception as mail_exc:
-                print(f"Erro ao enviar email para {email}: {mail_exc}")
-
-        if storage.STORAGE_ENABLED:
-            object_name = f"{job_id}/{output_path.name}"
-            await run_in_threadpool(storage.upload_file, object_name, output_path)
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            _jobs[job_id] = {
-                "status": "completed",
-                "object_name": object_name,
-                "filename": output_path.name,
-                "media_type": media_type,
-            }
-        else:
-            _jobs[job_id] = {
-                "status": "completed",
-                "output_path": output_path,
-                "media_type": media_type,
-                "tmp_dir": tmp_dir
-            }
-    except Exception as e:
-        _jobs[job_id] = {"status": "error", "error": str(e)}
+                await run_in_threadpool(mail.send_transcription_email, payload.email, output_path)
+            except Exception as e:
+                print(f"Erro ao enviar e-mail para {payload.email}: {e}")
+                
+        return {"status": "completed"}
+    finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
