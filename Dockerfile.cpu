@@ -30,6 +30,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --no-dev \
         --no-install-package torch \
         --no-install-package torchaudio \
+        --no-install-package torchcodec \
         --no-install-package cuda-bindings \
         --no-install-package cuda-toolkit \
         --no-install-package cuda-pathfinder
@@ -39,7 +40,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --python /app/.venv/bin/python \
         --torch-backend=cpu \
-        torch torchaudio
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        torch torchaudio torchcodec
 
 ########################
 # Runtime

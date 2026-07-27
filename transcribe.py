@@ -75,7 +75,11 @@ def load_diarization_pipeline(hf_token: str, device: str):
 
 
 def diarize(pipeline, wav_path: Path) -> list[Turn]:
-    diarization = pipeline(str(wav_path))
+    import torchaudio
+    waveform, sample_rate = torchaudio.load(str(wav_path))
+    audio_in_memory = {"waveform": waveform, "sample_rate": sample_rate}
+    
+    diarization = pipeline(audio_in_memory)
     annotation = getattr(diarization, "speaker_diarization", diarization)
     turns = [
         Turn(start=turn.start, end=turn.end, speaker=speaker)
@@ -159,8 +163,9 @@ def main() -> None:
             if not hf_token:
                 sys.exit(
                     "HF_TOKEN não definido. Crie um token em https://huggingface.co/settings/tokens, "
-                    "aceite os termos em https://huggingface.co/pyannote/speaker-diarization-3.1 e "
-                    "https://huggingface.co/pyannote/segmentation-3.0, e defina HF_TOKEN no arquivo .env "
+                    "aceite os termos em https://huggingface.co/pyannote/speaker-diarization-3.1, "
+                    "https://huggingface.co/pyannote/segmentation-3.0 e "
+                    "https://huggingface.co/pyannote/speaker-diarization-community-1, e defina HF_TOKEN no arquivo .env "
                     "(veja .env.example). Ou use --no-diarization para pular essa etapa."
                 )
             print("Identificando speakers...")
