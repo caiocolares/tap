@@ -29,7 +29,7 @@ Contém toda a lógica pesada de negócio e ML:
 Uma camada web fina sobre o `transcribe.py`:
 - **Modelos e Concorrência**: Carrega os modelos via Lazy Loading num cache em memória (`_cache`). Um `threading.Lock()` global garante processamento serial das inferências, evitando falhas de OOM (Out Of Memory) na GPU.
 - **Proteção de Memória**: O áudio recebido não é carregado integralmente na RAM; ele é lido sob demanda via `request.stream()` e escrito direto no disco temporário.
-- **API Assíncrona (Background Tasks)**: Para evitar desconexões por timeout no cliente (muito comum em transcrições longas), o processamento pesado é delegado a *Background Tasks*. O servidor devolve um `job_id` rápido, enquanto a IA roda isolada em um *threadpool*.
+- **API Assíncrona (Background Tasks)**: Para evitar desconexões por timeout no cliente (muito comum em transcrições longas), o processamento pesado é delegado a *Background Tasks*. O servidor devolve um `job_id` rápido, enquanto a IA roda isolada em um *threadpool*. Adicionalmente, suporta o envio automático de e-mail com a transcrição em anexo, se o usuário informar o seu contato via Query Parameter e houver um provedor SMTP configurado.
 
 ### Infraestrutura
 - **Docker**: Fornece duas builds separadas (`Dockerfile.cpu` e `Dockerfile.gpu`) para minimizar o tamanho da imagem em ambientes que não possuem placas NVIDIA.
@@ -61,6 +61,7 @@ sequenceDiagram
     FFmpeg-->>Background: OK
     Background->>Whisper: Inferência (Whisper + Pyannote)
     Whisper-->>Background: Segmentos com Speakers
+    Note over Background: Envia transcrição via e-mail (se requisitado)
     Background->>Background: Atualiza status do job para "completed"
     
     %% Fase 3: Polling e Download

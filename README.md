@@ -175,6 +175,11 @@ Configuração via variáveis de ambiente (todas opcionais, também lidas do `.e
 | `MINIO_SECRET_KEY` | — | Secret key do MinIO/S3 |
 | `MINIO_BUCKET` | `audio-to-text` | Bucket onde o resultado dos jobs assíncronos é gravado (criado automaticamente se não existir) |
 | `MINIO_SECURE` | `false` | `true` para usar TLS (HTTPS) na conexão com o MinIO/S3 |
+| `SMTP_HOST` | — | Host do servidor SMTP para envio da transcrição por e-mail |
+| `SMTP_PORT` | `587` | Porta do servidor SMTP |
+| `SMTP_USER` | — | Usuário para autenticação SMTP |
+| `SMTP_PASSWORD` | — | Senha para autenticação SMTP |
+| `SMTP_FROM` | `nao-responda@exemplo.com` | Endereço de remetente (From) para os e-mails enviados |
 
 ### Endpoints
 
@@ -206,9 +211,10 @@ curl -X POST \
 Para evitar *timeouts* de conexão em áudios longos, o sistema suporta processamento assíncrono (modelo de *Polling*). O servidor agenda o trabalho em *background* e devolve um `job_id` imediatamente.
 
 1. **Despachar o Job**:
+   Você pode informar opcionalmente o parâmetro `?email=` na URL. Caso configurado o servidor SMTP, a transcrição final será enviada como anexo para o e-mail informado.
    ```bash
    curl -X POST --data-binary @audio.mp3 -H "Content-Type: audio/mpeg" \
-     http://localhost:8000/async/transcricao/txt
+     "http://localhost:8000/async/transcricao/txt?email=seu.email@exemplo.com"
    ```
    *Retorno*: `{"job_id": "8f3...a9b", "status": "processing"}`
 
