@@ -14,6 +14,12 @@ from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
+import jwt
+from datetime import datetime, timedelta, timezone
+from pydantic import BaseModel
+from fastapi import Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
 import storage
 import mail
 from transcribe import (
@@ -33,6 +39,7 @@ MODEL_SIZE = os.environ.get("WHISPER_MODEL", "medium")
 DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 LANGUAGE = os.environ.get("WHISPER_LANGUAGE") or None
 HF_TOKEN = os.environ.get("HF_TOKEN")
+JWT_SECRET = os.environ.get("JWT_SECRET", "super-secreto-mudar-em-producao")
 
 app = FastAPI(
     title="audio-to-text",
@@ -62,9 +69,36 @@ def _diarization_pipeline():
 def health():
     return {"status": "ok"}
 
+security = HTTPBearer()
+
+def get_current_email(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        email = payload.get("sub")
+        if not email:
+            raise HTTPException(status_code=401, detail="Token sem e-mail")
+        return email
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expirado")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token inválido")
+
+class AuthRequest(BaseModel):
+    email: str
+
+@app.post("/auth/request-code")
+async def request_code(req: AuthRequest, background_tasks: BackgroundTasks):
+    expire = datetime.now(timezone.utc) + timedelta(hours=24)
+    payload = {"sub": req.email, "exp": expire}
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    
+    background_tasks.add_task(mail.send_auth_code_email, req.email, token)
+    return {"message": "Um código de acesso foi gerado e enviado para o seu e-mail."}
+
 
 @app.post("/transcricao/{formato}")
-async def transcrever(formato: Literal["txt", "json"], request: Request):
+async def transcrever(formato: Literal["txt", "json"], request: Request, email: str = Depends(get_current_email)):
     tmp_dir = Path(tempfile.mkdtemp(prefix="audio-to-text-"))
     input_path = tmp_dir / "audio.mp3"
 
@@ -93,7 +127,7 @@ async def transcrever(formato: Literal["txt", "json"], request: Request):
         raise
 
 @app.post("/async/transcricao/{formato}")
-async def transcrever_async(formato: Literal["txt", "json"], request: Request, background_tasks: BackgroundTasks, email: str | None = None):
+async def transcrever_async(formato: Literal["txt", "json"], request: Request, background_tasks: BackgroundTasks, email: str = Depends(get_current_email)):
     tmp_dir = Path(tempfile.mkdtemp(prefix="audio-to-text-async-"))
     input_path = tmp_dir / "audio.mp3"
 

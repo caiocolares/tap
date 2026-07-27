@@ -54,3 +54,37 @@ def send_transcription_email(to_email: str, file_path: Path):
     except Exception as e:
         print(f"[mail] Falha ao enviar e-mail para {to_email}: {e}")
         raise
+
+def send_auth_code_email(to_email: str, token: str):
+    if not SMTP_HOST:
+        print(f"[mail] SMTP_HOST não configurado. Simulação de envio para: {to_email}. Token: {token}")
+        return
+
+    msg = EmailMessage()
+    msg['Subject'] = 'Seu código de acesso para a API de Transcrição'
+    msg['From'] = SMTP_FROM
+    msg['To'] = to_email
+    
+    msg.set_content(
+        "Olá!\n\n"
+        "Você solicitou acesso à API de transcrição (Text & Audio Parser).\n\n"
+        "Seu token de acesso é válido por 24 horas:\n"
+        f"{token}\n\n"
+        "Para utilizá-lo, passe o token no cabeçalho Authorization das suas requisições HTTP:\n"
+        "Authorization: Bearer SEU_TOKEN_AQUI\n\n"
+        "A requisição enviará automaticamente a transcrição finalizada para este e-mail.\n\n"
+        "Atenciosamente,\n"
+        "Equipe Audio-to-Text"
+    )
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            if SMTP_PORT == 587:
+                server.starttls()
+            if SMTP_USER and SMTP_PASSWORD:
+                server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(msg)
+            print(f"[mail] E-mail de autorização enviado para {to_email}")
+    except Exception as e:
+        print(f"[mail] Falha ao enviar e-mail de autorização para {to_email}: {e}")
+        raise
