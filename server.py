@@ -15,6 +15,7 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 import storage
+import mail
 from transcribe import (
     assign_speakers,
     diarize,
@@ -92,7 +93,7 @@ async def transcrever(formato: Literal["txt", "json"], request: Request):
         raise
 
 @app.post("/async/transcricao/{formato}")
-async def transcrever_async(formato: Literal["txt", "json"], request: Request, background_tasks: BackgroundTasks):
+async def transcrever_async(formato: Literal["txt", "json"], request: Request, background_tasks: BackgroundTasks, email: str | None = None):
     tmp_dir = Path(tempfile.mkdtemp(prefix="audio-to-text-async-"))
     input_path = tmp_dir / "audio.mp3"
 
@@ -108,7 +109,7 @@ async def transcrever_async(formato: Literal["txt", "json"], request: Request, b
 
         job_id = str(uuid.uuid4())
         _jobs[job_id] = {"status": "processing"}
-        background_tasks.add_task(_background_process, job_id, input_path, formato, tmp_dir)
+        background_tasks.add_task(_background_process, job_id, input_path, formato, tmp_dir, email)
 
         return {"job_id": job_id, "status": "processing"}
     except Exception:
@@ -146,12 +147,18 @@ async def status_transcricao(job_id: str):
         )
 
 
-async def _background_process(job_id: str, input_path: Path, formato: str, tmp_dir: Path):
+async def _background_process(job_id: str, input_path: Path, formato: str, tmp_dir: Path, email: str | None = None):
     try:
         if storage.STORAGE_ENABLED:
             await run_in_threadpool(storage.upload_file, f"{job_id}/audio.mp3", input_path)
 
         output_path, media_type = await run_in_threadpool(_processar, input_path, formato, tmp_dir)
+
+        if email:
+            try:
+                await run_in_threadpool(mail.send_transcription_email, email, output_path)
+            except Exception as mail_exc:
+                print(f"Erro ao enviar email para {email}: {mail_exc}")
 
         if storage.STORAGE_ENABLED:
             object_name = f"{job_id}/{output_path.name}"
