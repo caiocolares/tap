@@ -18,6 +18,7 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-nao-responda@exemplo.com}
+      JWT_SECRET: ${JWT_SECRET:-super-secreto-mudar-em-producao}
     depends_on:
       minio:
         condition: service_healthy
