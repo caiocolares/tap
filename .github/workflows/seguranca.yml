@@ -31,7 +31,7 @@ jobs:
     name: Segredos (histórico completo)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # fetch-depth: 0 é obrigatório: a varredura precisa cobrir o HISTÓRICO,
           # não só o estado atual. Repositório que já foi público pode ter segredo
@@ -57,7 +57,7 @@ jobs:
     name: Vulnerabilidades em dependências
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Gate: só vulnerabilidade barra o PR. Licença entra no passo seguinte, como
       # relatório — achado de licença exige leitura humana, não bloqueio automático.
@@ -93,7 +93,7 @@ jobs:
     name: SBOM (CycloneDX)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Gerar SBOM com Syft
         run: |
@@ -123,7 +123,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Imagem legada, se necessário: returntocorp/semgrep
       - name: Semgrep (regras padrão da comunidade)
         run: |
