@@ -56,12 +56,8 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
 
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
-<<<<<<< HEAD
-COPY --chown=app:app transcribe.py server.py storage.py settings.py jobs.py processing.py worker.py ./
+COPY --chown=app:app transcribe.py server.py storage.py settings.py jobs.py processing.py worker.py auth.py mail.py notifications.py ./
 COPY --chown=app:app migrations/ ./migrations/
-=======
-COPY --chown=app:app transcribe.py server.py storage.py mail.py worker.py ./
->>>>>>> origin/develop
 
 # Compatibilidade com OpenShift: a SCC `restricted` roda o container com um
 # UID arbitrário (não necessariamente 1000), sempre pertencente ao grupo 0.

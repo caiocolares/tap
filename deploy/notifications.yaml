@@ -1,0 +1,30 @@
+# Usa a imagem leve e o mesmo Secret da API, incluindo as variáveis SMTP.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: audio-to-text-notifications
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: audio-to-text-notifications
+  template:
+    metadata:
+      labels:
+        app: audio-to-text-notifications
+    spec:
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: notifications
+          image: image-registry.example.com/<namespace>/audio-to-text:api
+          command: ["python", "-m", "notifications"]
+          envFrom:
+            - secretRef:
+                name: tap-runtime
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi

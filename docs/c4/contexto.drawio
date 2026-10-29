@@ -26,6 +26,12 @@
         <mxCell id="edge-2" value="HTTPS: download de modelos" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#555555;fontColor=#333333;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="tap" target="hf">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
+        <mxCell id="smtp" value="&lt;b&gt;Servidor SMTP&lt;/b&gt;&lt;br&gt;[External Software System]&lt;br&gt;Tokens e transcrições por e-mail" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#999999;fontColor=#ffffff;strokeColor=#ffffff;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="820" y="450" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="tap-smtp" value="SMTP: códigos de acesso e resultados" edge="1" parent="1" source="tap" target="smtp" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#555555;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
       </root>
     </mxGraphModel>
   </diagram>

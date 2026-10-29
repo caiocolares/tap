@@ -11,3 +11,5 @@ A fila durável e a recuperação de trabalhos estão implementadas em `jobs.py`
 - Considerar pool de conexões, notificações e outras formas de distribuição quando o polling PostgreSQL se tornar um gargalo medido.
 - Evoluir o contrato HTTP com status/download separados e idempotência de submissão. Reenviar o POST atualmente cria outro job.
 - Definir cancelamento e timeout da inferência completa; a recuperação atual reexecuta o trabalho inteiro, sem checkpoint.
+
+A integração de JWT e e-mail está documentada na [ADR-0002](docs/adr/0002-integrar-autenticacao-e-notificacoes-a-fila-postgresql.md). Cada job tem proprietário e a fila de notificações usa tentativas independentes da inferência.

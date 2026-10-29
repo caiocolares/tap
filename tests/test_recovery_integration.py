@@ -13,9 +13,12 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+import auth
+import notifications
 import server
 import storage
 from jobs import JobRepository
+from notifications import NotificationDispatcher
 from settings import load_settings
 from worker import Worker
 
@@ -75,10 +78,18 @@ def real_storage(monkeypatch):
 
 
 def test_killed_worker_is_recovered_and_result_survives_api_restart(postgres_repo, real_storage, monkeypatch):
-    configuration = replace(load_settings(), model="tiny", language="pt", hf_token=None)
+    configuration = replace(
+        load_settings(),
+        model="tiny",
+        language="pt",
+        hf_token=None,
+        jwt_secret="test-only-secret-not-for-production-123456",
+        smtp_host="smtp.example.com",
+    )
+    headers = {"Authorization": f"Bearer {auth.issue_token('alice@example.com', configuration)}"}
     monkeypatch.setattr(server, "_settings", configuration)
     monkeypatch.setattr(server, "_repository", postgres_repo)
-    with TestClient(server.app) as client:
+    with TestClient(server.app, headers=headers) as client:
         assert client.get("/ready").status_code == 200
         response = client.post("/async/transcricao/txt", content=b"original audio")
         assert response.status_code == 200
@@ -112,10 +123,40 @@ def test_killed_worker_is_recovered_and_result_survives_api_restart(postgres_rep
     assert completed.status == "completed"
     assert completed.attempts == 2
 
+    # Uma falha SMTP não deve transformar um resultado concluído em nova inferência.
+    deliveries = []
+
+    def send(to_email, path, **kwargs):
+        deliveries.append((to_email, path.read_text(encoding="utf-8")))
+        if len(deliveries) == 1:
+            raise OSError("SMTP temporariamente indisponível")
+
+    monkeypatch.setattr(notifications.mail, "send_transcription_email", send)
+    dispatcher = NotificationDispatcher(restarted_repository, configuration)
+    assert dispatcher.run_once()
+    assert restarted_repository.get(job_id).status == "completed"
+    assert restarted_repository.claim(60, 3600) is None
+    with restarted_repository._connect() as conn:
+        conn.execute(
+            "UPDATE tap_jobs SET notification_available_at = clock_timestamp() - interval '1 second' WHERE job_id = %s",
+            (job_id,),
+        )
+    assert dispatcher.run_once()
+    assert restarted_repository.get(job_id).notification_status == "sent"
+    assert restarted_repository.get(job_id).attempts == 2
+    assert deliveries == [("alice@example.com", "áudio recuperado")] * 2
+
     monkeypatch.setattr(server, "_repository", JobRepository(postgres_repo.database_url))
-    with TestClient(server.app) as restarted_client:
+    with TestClient(server.app, headers=headers) as restarted_client:
         for _ in range(2):
             response = restarted_client.get(f"/async/status/{job_id}")
             assert response.status_code == 200
             assert response.text == "áudio recuperado"
         assert restarted_client.get("/ready").status_code == 200
+        other_token = auth.issue_token("bob@example.com", configuration)
+        assert (
+            restarted_client.get(
+                f"/async/status/{job_id}", headers={"Authorization": f"Bearer {other_token}"}
+            ).status_code
+            == 404
+        )

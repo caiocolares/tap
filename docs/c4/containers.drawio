@@ -53,6 +53,24 @@
         <mxCell id="edge-7" value="HTTPS: modelos" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#555555;fontColor=#333333;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cli" target="hf">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
+        <mxCell id="notifications" value="&lt;b&gt;Notificador&lt;/b&gt;&lt;br&gt;[Container: Python]&lt;br&gt;Reservas e tentativas de e-mail" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#438DD5;fontColor=#ffffff;strokeColor=#ffffff;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="620" y="550" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="smtp" value="&lt;b&gt;Servidor SMTP&lt;/b&gt;&lt;br&gt;[External Software System]&lt;br&gt;Códigos de acesso e resultados" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#999999;fontColor=#ffffff;strokeColor=#ffffff;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="930" y="280" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="notification-db" value="SQL: reserva e confirma envio" edge="1" parent="1" source="notifications" target="db" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#555555;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="notification-store" value="S3: baixa resultado" edge="1" parent="1" source="notifications" target="store" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#555555;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="notification-smtp" value="SMTP: transcrição em anexo" edge="1" parent="1" source="notifications" target="smtp" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#555555;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="auth-smtp" value="SMTP: token de acesso" edge="1" parent="1" source="api" target="smtp" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#555555;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
       </root>
     </mxGraphModel>
   </diagram>

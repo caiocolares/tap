@@ -29,6 +29,13 @@ def clean_environment(monkeypatch):
         "JOB_RETRY_SECONDS",
         "WORKER_POLL_SECONDS",
         "API_ASYNC_ONLY",
+        "JWT_SECRET",
+        "SMTP_HOST",
+        "SMTP_PORT",
+        "SMTP_USER",
+        "SMTP_PASSWORD",
+        "SMTP_SECURITY",
+        "SMTP_TIMEOUT_SECONDS",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -75,6 +82,12 @@ def test_environment_takes_precedence_over_dotenv(tmp_path, monkeypatch):
         "JOB_HEARTBEAT_SECONDS",
         "JOB_RETRY_SECONDS",
         "WORKER_POLL_SECONDS",
+        "JWT_TTL_SECONDS",
+        "AUTH_WINDOW_SECONDS",
+        "AUTH_MAX_REQUESTS",
+        "AUTH_IP_MAX_REQUESTS",
+        "SMTP_PORT",
+        "SMTP_TIMEOUT_SECONDS",
     ],
 )
 @pytest.mark.parametrize("value", ["0", "-1", "abc"])
@@ -109,4 +122,14 @@ def test_heartbeat_must_fit_inside_lease(monkeypatch):
 def test_database_requires_postgres_url(monkeypatch):
     monkeypatch.setenv("JOBS_DATABASE_URL", "sqlite:///jobs.db")
     with pytest.raises(ValueError, match="JOBS_DATABASE_URL"):
+        settings.load_settings()
+
+
+def test_rejects_invalid_smtp_configuration(monkeypatch):
+    monkeypatch.setenv("SMTP_SECURITY", "invalid")
+    with pytest.raises(ValueError, match="SMTP_SECURITY"):
+        settings.load_settings()
+    monkeypatch.setenv("SMTP_SECURITY", "starttls")
+    monkeypatch.setenv("SMTP_USER", "test")
+    with pytest.raises(ValueError, match="SMTP_PASSWORD"):
         settings.load_settings()

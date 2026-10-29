@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect, Request
 
+import auth
 import server
 from jobs import JobRepository, QueueFullError
 from transcribe import AudioConversionError
@@ -19,7 +20,14 @@ def dependencies(monkeypatch):
     repository = Mock(spec=JobRepository)
     repository.get.return_value = None
     monkeypatch.setattr(server, "_repository", repository)
-    monkeypatch.setattr(server, "_settings", replace(server._settings, hf_token=None))
+    monkeypatch.setattr(
+        server,
+        "_settings",
+        replace(
+            server._settings, hf_token=None, jwt_secret="test-only-secret-not-for-production-123456", smtp_host=None
+        ),
+    )
+    monkeypatch.setattr(server, "_auth_limiter", auth.LocalRateLimiter())
     monkeypatch.setattr(server, "_capacity", threading.BoundedSemaphore(2))
     monkeypatch.setattr(server.storage, "STORAGE_ENABLED", True)
     monkeypatch.setattr(server.storage, "check_connection", lambda: None)
@@ -48,7 +56,8 @@ def dependencies(monkeypatch):
 
 @pytest.fixture
 def client():
-    with TestClient(server.app) as client:
+    headers = {"Authorization": f"Bearer {auth.issue_token('alice@example.com', server._settings)}"}
+    with TestClient(server.app, headers=headers) as client:
         yield client
 
 
@@ -66,6 +75,7 @@ def test_accepts_valid_audio(client, dependencies, route, format):
         assert args[1] == format
         assert bucket[args[2]] == b"audio"
         assert args[3:6] == (server._settings.model, server._settings.language, False)
+        assert repo.enqueue.call_args.kwargs == {"owner_email": "alice@example.com", "notify": False}
         processor.process.assert_not_called()
     else:
         assert "resultado" in response.text
@@ -204,7 +214,7 @@ def test_disconnect_cleans_upload_and_releases_capacity(tmp_path, monkeypatch, a
     request = Request({"type": "http", "headers": []}, receive)
     operation = server.transcrever_async if asynchronous else server.transcrever
     with pytest.raises(ClientDisconnect):
-        asyncio.run(operation("txt", request))
+        asyncio.run(operation("txt", request, email="alice@example.com"))
     assert not upload_dir.exists()
     assert capacity.acquire(blocking=False)
     capacity.release()
@@ -219,3 +229,76 @@ def test_failed_download_cleans_temporary_copy(client, dependencies, job_factory
     with pytest.raises(KeyError):
         client.get("/async/status/result")
     assert not directory.exists()
+
+
+@pytest.mark.parametrize(
+    "route,method",
+    [
+        ("/transcricao/txt", "post"),
+        ("/async/transcricao/txt", "post"),
+        ("/async/status/missing", "get"),
+    ],
+)
+def test_missing_and_invalid_tokens_are_rejected(client, route, method):
+    for authorization in ["", "Bearer invalid", "Basic something"]:
+        response = getattr(client, method)(route, headers={"Authorization": authorization})
+        assert response.status_code == 401
+        assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_job_is_never_exposed_to_another_user_or_when_unowned(client, dependencies, job_factory):
+    repo, _, _ = dependencies
+    for owner in ["bob@example.com", None]:
+        for status in ["queued", "processing", "completed", "error"]:
+            repo.get.return_value = job_factory(owner_email=owner, status=status)
+            assert client.get("/async/status/private").status_code == 404
+
+
+def test_authentication_request_sends_token_only_by_mail(client, dependencies, monkeypatch, caplog):
+    monkeypatch.setattr(server, "_settings", replace(server._settings, smtp_host="smtp.example.com"))
+    sender = Mock()
+    monkeypatch.setattr(server.mail, "send_auth_code_email", sender)
+    response = client.post("/auth/request-code", json={"email": "alice@example.com"})
+    assert response.status_code == 200
+    email, token = sender.call_args.args
+    assert email == "alice@example.com"
+    assert auth.decode_token(token, server._settings) == email
+    assert token not in response.text
+    assert token not in caplog.text
+
+
+def test_auth_requests_validate_email_and_do_not_claim_delivery_without_smtp(client):
+    assert client.post("/auth/request-code", json={"email": "not-email"}).status_code == 422
+    assert client.post("/auth/request-code", json={"email": "alice@example.com"}).status_code == 503
+
+
+def test_smtp_failure_does_not_log_token_or_report_success(client, monkeypatch, caplog):
+    monkeypatch.setattr(server, "_settings", replace(server._settings, smtp_host="smtp.example.com"))
+    monkeypatch.setattr(server.mail, "send_auth_code_email", Mock(side_effect=RuntimeError("private-server-error")))
+    response = client.post("/auth/request-code", json={"email": "alice@example.com"})
+    assert response.status_code == 503
+    assert "private-server-error" not in response.text + caplog.text
+
+
+def test_auth_endpoint_limits_requests_without_database(client, monkeypatch):
+    monkeypatch.setattr(server, "_repository", None)
+    monkeypatch.setattr(
+        server, "_settings", replace(server._settings, smtp_host="smtp.example.com", auth_max_requests=1)
+    )
+    sender = Mock()
+    monkeypatch.setattr(server.mail, "send_auth_code_email", sender)
+    assert client.post("/auth/request-code", json={"email": "alice@example.com"}).status_code == 200
+    rejected = client.post("/auth/request-code", json={"email": "alice@example.com"})
+    assert rejected.status_code == 429
+    assert int(rejected.headers["retry-after"]) > 0
+    sender.assert_called_once()
+
+
+def test_api_startup_requires_explicit_secret(monkeypatch):
+    monkeypatch.setattr(server, "_settings", replace(server._settings, jwt_secret=None))
+    with pytest.raises(ValueError, match="JWT_SECRET"), TestClient(server.app):
+        pass
+
+
+def test_removed_legacy_internal_worker_route_is_not_exposed(client):
+    assert client.post("/internal/worker", json={"job_id": "anything"}).status_code == 404

@@ -10,7 +10,7 @@ RUN useradd --uid 1000 --create-home app
 WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 API_ASYNC_ONLY=true
 COPY --from=builder /app/.venv /app/.venv
-COPY server.py settings.py storage.py jobs.py processing.py transcribe.py ./
+COPY server.py settings.py storage.py jobs.py processing.py transcribe.py auth.py mail.py notifications.py ./
 COPY migrations/ ./migrations/
 USER app
 EXPOSE 8000

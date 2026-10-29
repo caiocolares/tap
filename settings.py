@@ -41,6 +41,18 @@ class Settings:
     job_retry_seconds: int
     worker_poll_seconds: int
     api_async_only: bool
+    jwt_secret: str | None
+    jwt_ttl_seconds: int
+    auth_window_seconds: int
+    auth_max_requests: int
+    auth_ip_max_requests: int
+    smtp_host: str | None
+    smtp_port: int
+    smtp_user: str | None
+    smtp_password: str | None
+    smtp_from: str
+    smtp_security: str
+    smtp_timeout_seconds: int
 
 
 def load_settings(env_file: Path | None = None) -> Settings:
@@ -66,9 +78,16 @@ def load_settings(env_file: Path | None = None) -> Settings:
     async_only = os.environ.get("API_ASYNC_ONLY", "false").lower()
     if async_only not in {"true", "false"}:
         raise ValueError("API_ASYNC_ONLY deve ser true ou false")
+    smtp_security = os.environ.get("SMTP_SECURITY", "starttls").lower()
+    if smtp_security not in {"starttls", "ssl", "none"}:
+        raise ValueError("SMTP_SECURITY deve ser starttls, ssl ou none")
+    smtp_user = os.environ.get("SMTP_USER") or None
+    smtp_password = os.environ.get("SMTP_PASSWORD") or None
+    if bool(smtp_user) != bool(smtp_password):
+        raise ValueError("SMTP_USER e SMTP_PASSWORD devem ser informados juntos")
 
     return Settings(
-        model=os.environ.get("WHISPER_MODEL", "medium"),
+        model=os.environ.get("WHISPER_MODEL", "small"),
         device=device,
         language=os.environ.get("WHISPER_LANGUAGE") or None,
         hf_token=os.environ.get("HF_TOKEN") or None,
@@ -90,4 +109,16 @@ def load_settings(env_file: Path | None = None) -> Settings:
         job_retry_seconds=_positive_int("JOB_RETRY_SECONDS", 5),
         worker_poll_seconds=_positive_int("WORKER_POLL_SECONDS", 1),
         api_async_only=async_only == "true",
+        jwt_secret=os.environ.get("JWT_SECRET") or None,
+        jwt_ttl_seconds=_positive_int("JWT_TTL_SECONDS", 86400),
+        auth_window_seconds=_positive_int("AUTH_WINDOW_SECONDS", 900),
+        auth_max_requests=_positive_int("AUTH_MAX_REQUESTS", 3),
+        auth_ip_max_requests=_positive_int("AUTH_IP_MAX_REQUESTS", 20),
+        smtp_host=os.environ.get("SMTP_HOST") or None,
+        smtp_port=_positive_int("SMTP_PORT", 587),
+        smtp_user=smtp_user,
+        smtp_password=smtp_password,
+        smtp_from=os.environ.get("SMTP_FROM", "nao-responda@exemplo.com"),
+        smtp_security=smtp_security,
+        smtp_timeout_seconds=_positive_int("SMTP_TIMEOUT_SECONDS", 30),
     )

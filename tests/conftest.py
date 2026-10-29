@@ -33,6 +33,7 @@ def job_factory():
             created_at=now,
             updated_at=now,
             expires_at=None,
+            owner_email="alice@example.com",
         )
         values.update(overrides)
         return Job(**values)
@@ -50,7 +51,7 @@ def postgres_repo():
     repo = JobRepository(url)
     repo.initialize()
     with repo._connect() as conn:
-        conn.execute("TRUNCATE tap_jobs")
+        conn.execute("TRUNCATE tap_jobs, tap_auth_limits")
     yield repo
     with repo._connect() as conn:
-        conn.execute("TRUNCATE tap_jobs")
+        conn.execute("TRUNCATE tap_jobs, tap_auth_limits")

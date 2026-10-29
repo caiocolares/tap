@@ -12,12 +12,9 @@ dependencies = [
     "torchaudio>=2.6.0",
     "uvicorn[standard]>=0.32.0",
     "minio>=7.2.20",
-<<<<<<< HEAD
     "psycopg[binary]>=3.2.0",
-=======
     "pyjwt>=2.13.0",
-    "pika>=1.4.2",
->>>>>>> origin/develop
+    "email-validator>=2.2.0",
 ]
 
 [dependency-groups]
@@ -29,6 +26,8 @@ api = [
     "fastapi>=0.115.0",
     "minio>=7.2.20",
     "psycopg[binary]>=3.2.0",
+    "pyjwt>=2.13.0",
+    "email-validator>=2.2.0",
     "python-dotenv>=1.0.0",
     "uvicorn[standard]>=0.32.0",
 ]
@@ -41,7 +40,7 @@ test = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "--cov=server --cov=transcribe --cov=storage --cov=settings --cov=jobs --cov=worker --cov=processing --cov-report=term-missing --cov-report=html"
+addopts = "--cov=server --cov=transcribe --cov=storage --cov=settings --cov=jobs --cov=worker --cov=processing --cov=auth --cov=mail --cov=notifications --cov-report=term-missing --cov-report=html"
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = ["integration: smoke tests using locally installed external tools"]

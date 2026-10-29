@@ -11,40 +11,23 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
+import jwt
 import psycopg
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, EmailStr
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
-import jwt
-from datetime import datetime, timedelta, timezone
-from pydantic import BaseModel
-from fastapi import Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import pika
-import json
-
+import auth
+import mail
 import storage
-<<<<<<< HEAD
 from jobs import JobRepository, QueueFullError
 from processing import AudioProcessor, TranscriptionOptions
 from settings import load_settings
 from transcribe import AudioConversionError
-=======
-import mail
-from transcribe import (
-    assign_speakers,
-    diarize,
-    load_diarization_pipeline,
-    load_whisper_model,
-    to_wav,
-    transcribe as run_transcription,
-    write_json,
-    write_txt,
-)
->>>>>>> origin/develop
 
 _settings = load_settings()
 MAX_UPLOAD_BYTES = _settings.max_upload_bytes
@@ -53,6 +36,8 @@ _capacity = threading.BoundedSemaphore(_settings.max_pending_jobs)
 _repository = JobRepository(_settings.jobs_database_url) if _settings.jobs_database_url else None
 _processor = AudioProcessor(_settings.device, _settings.hf_token)
 logger = logging.getLogger(__name__)
+security = HTTPBearer(auto_error=False)
+_auth_limiter = auth.LocalRateLimiter()
 
 
 async def _cleanup_loop() -> None:
@@ -67,6 +52,7 @@ async def _cleanup_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    auth.require_secret(_settings)
     if _repository is not None:
         await run_in_threadpool(_repository.initialize)
     cleanup_task = asyncio.create_task(_cleanup_loop())
@@ -77,14 +63,6 @@ async def lifespan(app: FastAPI):
         with suppress(asyncio.CancelledError):
             await cleanup_task
 
-<<<<<<< HEAD
-=======
-MODEL_SIZE = os.environ.get("WHISPER_MODEL", "small")
-DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
-LANGUAGE = os.environ.get("WHISPER_LANGUAGE") or None
-HF_TOKEN = os.environ.get("HF_TOKEN")
-JWT_SECRET = os.environ.get("JWT_SECRET", "super-secreto-mudar-em-producao")
->>>>>>> origin/develop
 
 app = FastAPI(
     title="audio-to-text",
@@ -92,59 +70,54 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-<<<<<<< HEAD
-=======
-# faster-whisper/pyannote não são seguros para chamadas concorrentes na mesma
-# instância; o modelo/pipeline ficam em cache e as inferências são serializadas.
-_lock = threading.Lock()
-_cache: dict = {}
-
-def _whisper_model():
-    if "whisper" not in _cache:
-        _cache["whisper"] = load_whisper_model(MODEL_SIZE, DEVICE)
-    return _cache["whisper"]
-
-
-def _diarization_pipeline():
-    if "diarization" not in _cache:
-        _cache["diarization"] = load_diarization_pipeline(HF_TOKEN, DEVICE)
-    return _cache["diarization"]
-
->>>>>>> origin/develop
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-security = HTTPBearer()
 
-def get_current_email(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
-    token = credentials.credentials
+def get_current_email(credentials: HTTPAuthorizationCredentials | None = Depends(security)) -> str:
+    headers = {"WWW-Authenticate": "Bearer"}
+    if credentials is None:
+        raise HTTPException(401, "Token de acesso obrigatório", headers=headers)
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        email = payload.get("sub")
-        if not email:
-            raise HTTPException(status_code=401, detail="Token sem e-mail")
-        return email
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expirado")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Token inválido")
+        return auth.decode_token(credentials.credentials, _settings)
+    except jwt.ExpiredSignatureError as exc:
+        raise HTTPException(401, "Token expirado", headers=headers) from exc
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(401, "Token inválido", headers=headers) from exc
+    except ValueError as exc:
+        raise HTTPException(503, "Autenticação não configurada") from exc
+
 
 class AuthRequest(BaseModel):
-    email: str
+    email: EmailStr
+
 
 @app.post("/auth/request-code")
-async def request_code(req: AuthRequest, background_tasks: BackgroundTasks):
-    expire = datetime.now(timezone.utc) + timedelta(hours=24)
-    payload = {"sub": req.email, "exp": expire}
-    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
-    
-    background_tasks.add_task(mail.send_auth_code_email, req.email, token)
+async def request_code(payload: AuthRequest, request: Request):
+    if not _settings.smtp_host:
+        raise HTTPException(503, "Serviço de e-mail indisponível")
+    email = str(payload.email)
+    keys = auth.rate_keys(email, request.client.host if request.client else "unknown", _settings)
+    try:
+        reserve = _repository.reserve_auth if _repository is not None else _auth_limiter.reserve
+        await run_in_threadpool(reserve, keys, _settings.auth_window_seconds)
+    except auth.RateLimitError as exc:
+        raise HTTPException(
+            429, "Limite de pedidos de acesso atingido", headers={"Retry-After": str(exc.retry_after)}
+        ) from exc
+    except psycopg.Error as exc:
+        raise HTTPException(503, "Autenticação temporariamente indisponível") from exc
+    try:
+        token = auth.issue_token(email, _settings)
+        await run_in_threadpool(mail.send_auth_code_email, email, token, settings=_settings)
+    except Exception as exc:
+        logger.warning("Não foi possível enviar o código de acesso")
+        raise HTTPException(503, "Não foi possível enviar o código de acesso") from exc
     return {"message": "Um código de acesso foi gerado e enviado para o seu e-mail."}
 
 
-<<<<<<< HEAD
 @app.get("/ready")
 async def ready():
     if _repository is not None:
@@ -193,137 +166,6 @@ async def _receive_audio(request: Request, input_path: Path) -> None:
             await run_in_threadpool(audio.write, chunk)
     if bytes_written == 0:
         raise HTTPException(400, "Corpo da requisição vazio: envie o áudio (mp3) como body.")
-=======
-@app.post("/transcricao/{formato}")
-async def transcrever(formato: Literal["txt", "json"], request: Request, email: str = Depends(get_current_email)):
-    tmp_dir = Path(tempfile.mkdtemp(prefix="audio-to-text-"))
-    input_path = tmp_dir / "audio.mp3"
-
-    try:
-        bytes_written = 0
-        with open(input_path, "wb") as f:
-            async for chunk in request.stream():
-                f.write(chunk)
-                bytes_written += len(chunk)
-
-        if bytes_written == 0:
-            raise HTTPException(400, "Corpo da requisição vazio: envie o áudio (mp3) como body.")
-
-        if storage.STORAGE_ENABLED:
-            await run_in_threadpool(storage.upload_file, f"{uuid.uuid4()}/audio.mp3", input_path)
-
-        output_path, media_type = await run_in_threadpool(_processar, input_path, formato, tmp_dir)
-        return FileResponse(
-            output_path,
-            media_type=media_type,
-            filename=output_path.name,
-            background=BackgroundTask(shutil.rmtree, tmp_dir, ignore_errors=True),
-        )
-    except Exception:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise
-
-@app.post("/async/transcricao/{formato}")
-async def transcrever_async(formato: Literal["txt", "json"], request: Request, email: str = Depends(get_current_email)):
-    if not storage.STORAGE_ENABLED:
-        raise HTTPException(500, "O processamento assíncrono requer configuração do MinIO.")
-
-    tmp_dir = Path(tempfile.mkdtemp(prefix="audio-to-text-async-"))
-    input_path = tmp_dir / "audio.mp3"
-
-    try:
-        bytes_written = 0
-        with open(input_path, "wb") as f:
-            async for chunk in request.stream():
-                f.write(chunk)
-                bytes_written += len(chunk)
-
-        if bytes_written == 0:
-            raise HTTPException(400, "Corpo da requisição vazio: envie o áudio (mp3) como body.")
-
-        job_id = str(uuid.uuid4())
-        await run_in_threadpool(storage.upload_file, f"{job_id}/audio.mp3", input_path)
-
-        def publish_message():
-            url = os.environ.get("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
-            connection = pika.BlockingConnection(pika.URLParameters(url))
-            channel = connection.channel()
-            channel.queue_declare(queue='transcription_jobs', durable=True)
-            payload = {"job_id": job_id, "formato": formato, "email": email}
-            channel.basic_publish(
-                exchange='',
-                routing_key='transcription_jobs',
-                body=json.dumps(payload),
-                properties=pika.BasicProperties(delivery_mode=pika.spec.PERSISTENT_DELIVERY_MODE)
-            )
-            connection.close()
-
-        await run_in_threadpool(publish_message)
-        return {"job_id": job_id, "status": "processing"}
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-
-@app.get("/async/status/{job_id}")
-async def status_transcricao(job_id: str):
-    if not storage.STORAGE_ENABLED:
-        raise HTTPException(500, "MinIO não configurado.")
-
-    has_json = await run_in_threadpool(storage.file_exists, f"{job_id}/transcricao.json")
-    has_txt = await run_in_threadpool(storage.file_exists, f"{job_id}/transcricao.txt")
-    
-    if has_json:
-        formato, media_type = "json", "application/json"
-    elif has_txt:
-        formato, media_type = "txt", "text/plain; charset=utf-8"
-    else:
-        has_audio = await run_in_threadpool(storage.file_exists, f"{job_id}/audio.mp3")
-        if has_audio:
-            return {"job_id": job_id, "status": "processing"}
-        raise HTTPException(404, "Job não encontrado")
-
-    tmp_dir = Path(tempfile.mkdtemp(prefix="audio-to-text-download-"))
-    output_path = tmp_dir / f"transcricao.{formato}"
-    await run_in_threadpool(storage.download_file, f"{job_id}/transcricao.{formato}", output_path)
-
-    return FileResponse(
-        output_path,
-        media_type=media_type,
-        filename=output_path.name,
-        background=BackgroundTask(shutil.rmtree, tmp_dir, ignore_errors=True),
-    )
-
-
-class WorkerPayload(BaseModel):
-    job_id: str
-    formato: str
-    email: str | None = None
-
-@app.post("/internal/worker")
-async def process_job(payload: WorkerPayload):
-    if not storage.STORAGE_ENABLED:
-        raise HTTPException(500, "MinIO não configurado.")
-
-    tmp_dir = Path(tempfile.mkdtemp(prefix="audio-to-text-worker-"))
-    input_path = tmp_dir / "audio.mp3"
-    
-    try:
-        await run_in_threadpool(storage.download_file, f"{payload.job_id}/audio.mp3", input_path)
-        output_path, media_type = await run_in_threadpool(_processar, input_path, payload.formato, tmp_dir)
-        
-        object_name = f"{payload.job_id}/{output_path.name}"
-        await run_in_threadpool(storage.upload_file, object_name, output_path)
-        
-        if payload.email:
-            try:
-                await run_in_threadpool(mail.send_transcription_email, payload.email, output_path)
-            except Exception as e:
-                print(f"Erro ao enviar e-mail para {payload.email}: {e}")
-                
-        return {"status": "completed"}
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
->>>>>>> origin/develop
 
 
 def _processar(input_path: Path, formato: str, tmp_dir: Path) -> tuple[Path, str]:
@@ -339,7 +181,7 @@ def _processar(input_path: Path, formato: str, tmp_dir: Path) -> tuple[Path, str
 
 
 @app.post("/transcricao/{formato}")
-async def transcrever(formato: Literal["txt", "json"], request: Request):
+async def transcrever(formato: Literal["txt", "json"], request: Request, email: str = Depends(get_current_email)):
     if _settings.api_async_only:
         raise HTTPException(503, "Esta instância atende apenas a API assíncrona; use /async/transcricao/{formato}")
     _reserve_capacity()
@@ -366,7 +208,7 @@ async def transcrever(formato: Literal["txt", "json"], request: Request):
 
 
 @app.post("/async/transcricao/{formato}")
-async def transcrever_async(formato: Literal["txt", "json"], request: Request):
+async def transcrever_async(formato: Literal["txt", "json"], request: Request, email: str = Depends(get_current_email)):
     repository = _require_jobs()
     _reserve_capacity()
     tmp_dir = None
@@ -386,6 +228,8 @@ async def transcrever_async(formato: Literal["txt", "json"], request: Request):
             bool(_settings.hf_token),
             _settings.job_max_attempts,
             _settings.max_queued_jobs,
+            owner_email=email,
+            notify=bool(_settings.smtp_host),
         )
         # Mantém o contrato existente: queued e processing são apresentados como processing.
         return {"job_id": str(job_id), "status": "processing"}
@@ -409,13 +253,13 @@ async def transcrever_async(formato: Literal["txt", "json"], request: Request):
 
 
 @app.get("/async/status/{job_id}")
-async def status_transcricao(job_id: str):
+async def status_transcricao(job_id: str, email: str = Depends(get_current_email)):
     repository = _require_jobs()
     try:
         job = await run_in_threadpool(repository.get, job_id)
     except psycopg.Error as exc:
         raise HTTPException(503, "Consulta de jobs temporariamente indisponível") from exc
-    if job is None:
+    if job is None or job.owner_email != email:
         raise HTTPException(404, "Job não encontrado")
     if job.expired:
         raise HTTPException(410, "Resultado expirado")

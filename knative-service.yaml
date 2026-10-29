@@ -2,6 +2,8 @@
 # Crie o Secret tap-runtime com JOBS_DATABASE_URL, MINIO_ENDPOINT,
 # MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET, MINIO_SECURE e HF_TOKEN
 # (HF_TOKEN opcional; use a mesma configuração nos workers).
+# JWT_SECRET é obrigatório para a API; configure SMTP_* para códigos de acesso
+# e aplique deploy/notifications.yaml para entregar as transcrições por e-mail.
 # Publique Dockerfile.api e ajuste a imagem antes de aplicar.
 apiVersion: serving.knative.dev/v1
 kind: Service

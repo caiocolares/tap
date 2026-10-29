@@ -11,6 +11,7 @@ pytestmark = pytest.mark.integration
 def test_initial_migration_is_safe_for_concurrent_startup(postgres_repo):
     with postgres_repo._connect() as conn:
         conn.execute("DROP TABLE tap_jobs")
+        conn.execute("DROP TABLE tap_auth_limits")
         conn.execute("DROP TABLE tap_schema_migrations")
     with ThreadPoolExecutor(max_workers=2) as pool:
         list(pool.map(lambda _: postgres_repo.initialize(), range(2)))
@@ -121,7 +122,8 @@ def test_heartbeat_extends_lease_and_prune_removes_terminal_metadata(postgres_re
     assert postgres_repo.get(str(job_id)) is None
 
 
-def test_worker_entrypoint_starts_and_stops_gracefully(postgres_repo):
+@pytest.mark.parametrize("module,ready", [("worker", b"aguardando jobs"), ("notifications", b"Notificador iniciado")])
+def test_worker_entrypoint_starts_and_stops_gracefully(postgres_repo, module, ready):
     import os
     import select
     import subprocess
@@ -134,11 +136,11 @@ def test_worker_entrypoint_starts_and_stops_gracefully(postgres_repo):
         "PYTHONUNBUFFERED": "1",
     }
     process = subprocess.Popen(
-        [sys.executable, "-m", "worker"], env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        [sys.executable, "-m", module], env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
     )
     try:
         assert select.select([process.stdout], [], [], 10)[0], "worker não sinalizou inicialização"
-        assert b"aguardando jobs" in process.stdout.readline()
+        assert ready in process.stdout.readline()
         process.terminate()
         assert process.wait(timeout=5) == 0
     finally:
@@ -146,3 +148,111 @@ def test_worker_entrypoint_starts_and_stops_gracefully(postgres_repo):
             process.kill()
             process.wait(timeout=5)
         process.stdout.close()
+
+
+def test_notification_retries_never_requeue_transcription(postgres_repo):
+    job_id = uuid4()
+    postgres_repo.enqueue(
+        job_id,
+        "txt",
+        "input.mp3",
+        "small",
+        "pt",
+        False,
+        3,
+        100,
+        owner_email="alice@example.com",
+        notify=True,
+    )
+    assert postgres_repo.claim_notification(60, 3) is None
+    processing = postgres_repo.claim(60, 3600)
+    assert postgres_repo.complete(processing, "result.txt", 3600)
+    first = postgres_repo.claim_notification(60, 3)
+    assert first.owner_email == "alice@example.com"
+    assert first.notification_attempts == 1
+    assert postgres_repo.renew_notification(first, 120)
+    assert postgres_repo.finish_notification(first, sent=False, max_attempts=3, retry_seconds=60)
+    assert postgres_repo.get(str(job_id)).status == "completed"
+    assert postgres_repo.claim(60, 3600) is None
+    assert postgres_repo.claim_notification(60, 3) is None
+    with postgres_repo._connect() as conn:
+        conn.execute(
+            "UPDATE tap_jobs SET notification_available_at = clock_timestamp() - interval '1 second' WHERE job_id = %s",
+            (job_id,),
+        )
+    second = postgres_repo.claim_notification(60, 3)
+    assert second.notification_attempts == 2
+    assert postgres_repo.finish_notification(second, sent=True, max_attempts=3)
+    finished = postgres_repo.get(str(job_id))
+    assert finished.notification_status == "sent"
+    assert finished.attempts == 1
+    assert postgres_repo.claim_notification(60, 3) is None
+
+
+@pytest.mark.parametrize("max_attempts", [1, 3])
+def test_notification_crash_recovery_and_stale_fencing(postgres_repo, max_attempts):
+    job_id = uuid4()
+    postgres_repo.enqueue(
+        job_id, "txt", "input", "small", None, False, 3, 100, owner_email="alice@example.com", notify=True
+    )
+    assert postgres_repo.complete(postgres_repo.claim(60, 3600), "result", 3600)
+    abandoned = postgres_repo.claim_notification(60, max_attempts)
+    with postgres_repo._connect() as conn:
+        conn.execute(
+            "UPDATE tap_jobs SET notification_lease_until = clock_timestamp() - interval '1 second' WHERE job_id = %s",
+            (job_id,),
+        )
+    assert not postgres_repo.renew_notification(abandoned, 60)
+    assert not postgres_repo.finish_notification(abandoned, sent=True, max_attempts=max_attempts)
+    recovered = postgres_repo.claim_notification(60, max_attempts)
+    if max_attempts == 1:
+        assert recovered is None
+        assert postgres_repo.get(str(job_id)).notification_status == "error"
+    else:
+        assert recovered.notification_lease_token != abandoned.notification_lease_token
+        assert not postgres_repo.finish_notification(abandoned, sent=True, max_attempts=max_attempts)
+        assert postgres_repo.finish_notification(recovered, sent=True, max_attempts=max_attempts)
+    assert postgres_repo.get(str(job_id)).status == "completed"
+
+
+def test_auth_rate_limit_is_global_and_atomic(postgres_repo):
+    from auth import RateLimitError
+
+    def reserve(index):
+        try:
+            postgres_repo.reserve_auth([(f"email:{index}", 3), ("ip:shared", 1)], 900)
+            return True
+        except RateLimitError:
+            return False
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        assert sum(pool.map(reserve, range(4))) == 1
+    reopened = JobRepository(postgres_repo.database_url)
+    with pytest.raises(RateLimitError):
+        reopened.reserve_auth([("email:new", 3), ("ip:shared", 1)], 900)
+    with postgres_repo._connect() as conn:
+        conn.execute("UPDATE tap_auth_limits SET window_until = clock_timestamp() - interval '1 second'")
+    reopened.prune()
+    reopened.reserve_auth([("email:new", 3), ("ip:shared", 1)], 900)
+
+
+def test_ownership_migration_preserves_legacy_jobs_without_exposing_them(postgres_repo):
+    from pathlib import Path
+
+    with postgres_repo._connect() as conn:
+        conn.execute("DROP TABLE tap_jobs")
+        conn.execute("DROP TABLE tap_auth_limits")
+        conn.execute("DELETE FROM tap_schema_migrations")
+        migration = Path(__file__).resolve().parents[1] / "migrations" / "001_create_jobs.sql"
+        conn.execute(migration.read_text())
+        conn.execute("INSERT INTO tap_schema_migrations (version) VALUES (%s)", (migration.name,))
+        identifier = uuid4()
+        conn.execute(
+            "INSERT INTO tap_jobs (job_id, format, input_object, model, diarization, max_attempts) VALUES (%s, 'txt', 'legacy', 'small', false, 3)",
+            (identifier,),
+        )
+    postgres_repo.initialize()
+    legacy = postgres_repo.get(str(identifier))
+    assert legacy.owner_email is None
+    assert legacy.status == "queued"
+    assert legacy.notification_status == "disabled"

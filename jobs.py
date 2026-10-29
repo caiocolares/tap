@@ -9,6 +9,8 @@ from uuid import UUID, uuid4
 import psycopg
 from psycopg.rows import dict_row
 
+from auth import RateLimitError
+
 
 class QueueFullError(Exception):
     """O limite global de jobs pendentes foi atingido."""
@@ -34,6 +36,12 @@ class Job:
     updated_at: datetime
     expires_at: datetime | None
     expired: bool = False
+    owner_email: str | None = None
+    notification_status: str = "disabled"
+    notification_attempts: int = 0
+    notification_available_at: datetime | None = None
+    notification_lease_token: UUID | None = None
+    notification_lease_until: datetime | None = None
 
     @property
     def filename(self) -> str:
@@ -80,6 +88,9 @@ class JobRepository:
         diarization: bool,
         max_attempts: int,
         max_pending: int,
+        *,
+        owner_email: str | None = None,
+        notify: bool = False,
     ) -> None:
         with self._connect() as conn:
             # Serializa somente a admissão; o limite é global, não por réplica.
@@ -91,9 +102,19 @@ class JobRepository:
                 raise QueueFullError
             conn.execute(
                 """INSERT INTO tap_jobs
-                   (job_id, format, input_object, model, language, diarization, max_attempts)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                (job_id, format, input_object, model, language, diarization, max_attempts),
+                   (job_id, format, input_object, model, language, diarization, max_attempts, owner_email, notification_status)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    job_id,
+                    format,
+                    input_object,
+                    model,
+                    language,
+                    diarization,
+                    max_attempts,
+                    owner_email,
+                    "pending" if notify and owner_email else "disabled",
+                ),
             )
 
     def get(self, job_id: str) -> Job | None:
@@ -185,3 +206,75 @@ class JobRepository:
     def prune(self) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM tap_jobs WHERE expires_at <= clock_timestamp()")
+            conn.execute("DELETE FROM tap_auth_limits WHERE window_until <= clock_timestamp()")
+
+    def reserve_auth(self, keys: list[tuple[str, int]], window_seconds: int) -> None:
+        with self._connect() as conn:
+            for key, limit in keys:
+                row = conn.execute(
+                    """INSERT INTO tap_auth_limits (key, hits, window_until)
+                       VALUES (%s, 1, clock_timestamp() + %s * interval '1 second')
+                       ON CONFLICT (key) DO UPDATE SET
+                           hits = CASE WHEN tap_auth_limits.window_until <= clock_timestamp()
+                               THEN 1 ELSE tap_auth_limits.hits + 1 END,
+                           window_until = CASE WHEN tap_auth_limits.window_until <= clock_timestamp()
+                               THEN EXCLUDED.window_until ELSE tap_auth_limits.window_until END
+                       RETURNING hits, greatest(1, ceil(extract(epoch FROM window_until - clock_timestamp()))) AS retry""",
+                    (key, window_seconds),
+                ).fetchone()
+                if row["hits"] > limit:
+                    raise RateLimitError(int(row["retry"]))
+
+    def claim_notification(self, lease_seconds: int, max_attempts: int) -> Job | None:
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE tap_jobs SET notification_status = 'error', notification_lease_token = NULL,
+                       notification_lease_until = NULL
+                   WHERE notification_status = 'sending' AND notification_lease_until <= clock_timestamp()
+                       AND notification_attempts >= %s""",
+                (max_attempts,),
+            )
+            row = conn.execute(
+                """WITH candidate AS (
+                       SELECT job_id FROM tap_jobs WHERE status = 'completed'
+                           AND expires_at > clock_timestamp() AND owner_email IS NOT NULL
+                           AND notification_attempts < %s AND (
+                               (notification_status = 'pending' AND notification_available_at <= clock_timestamp()) OR
+                               (notification_status = 'sending' AND notification_lease_until <= clock_timestamp()))
+                       ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1
+                   )
+                   UPDATE tap_jobs AS job SET notification_status = 'sending',
+                       notification_attempts = notification_attempts + 1,
+                       notification_lease_token = %s,
+                       notification_lease_until = clock_timestamp() + %s * interval '1 second'
+                   FROM candidate WHERE job.job_id = candidate.job_id RETURNING job.*""",
+                (max_attempts, uuid4(), lease_seconds),
+            ).fetchone()
+        return Job(**row) if row else None
+
+    def renew_notification(self, job: Job, lease_seconds: int) -> bool:
+        with self._connect() as conn:
+            return (
+                conn.execute(
+                    """UPDATE tap_jobs SET notification_lease_until = clock_timestamp() + %s * interval '1 second'
+                   WHERE job_id = %s AND notification_status = 'sending' AND notification_lease_token = %s
+                       AND notification_lease_until > clock_timestamp()""",
+                    (lease_seconds, job.job_id, job.notification_lease_token),
+                ).rowcount
+                == 1
+            )
+
+    def finish_notification(self, job: Job, *, sent: bool, max_attempts: int, retry_seconds: int = 0) -> bool:
+        with self._connect() as conn:
+            return (
+                conn.execute(
+                    """UPDATE tap_jobs SET notification_status = CASE WHEN %s THEN 'sent'
+                           WHEN notification_attempts >= %s THEN 'error' ELSE 'pending' END,
+                       notification_available_at = clock_timestamp() + %s * interval '1 second',
+                       notification_lease_token = NULL, notification_lease_until = NULL
+                   WHERE job_id = %s AND notification_status = 'sending' AND notification_lease_token = %s
+                       AND notification_lease_until > clock_timestamp()""",
+                    (sent, max_attempts, retry_seconds, job.job_id, job.notification_lease_token),
+                ).rowcount
+                == 1
+            )

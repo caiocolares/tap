@@ -17,29 +17,11 @@ services:
     env_file:
       - .env
     environment:
-<<<<<<< HEAD
       <<: *runtime
       API_ASYNC_ONLY: "true"
+      JWT_SECRET: ${JWT_SECRET:?Configure JWT_SECRET no arquivo .env}
     depends_on:
       postgres:
-=======
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MINIO_BUCKET: ${MINIO_BUCKET:-audio-to-text}
-      MINIO_SECURE: "false"
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM: ${SMTP_FROM:-nao-responda@exemplo.com}
-      JWT_SECRET: ${JWT_SECRET:-super-secreto-mudar-em-producao}
-      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      minio:
->>>>>>> origin/develop
         condition: service_healthy
       minio:
         condition: service_started
@@ -56,6 +38,23 @@ services:
     environment:
       <<: *runtime
       WHISPER_DEVICE: cpu
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  notifications:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    entrypoint: ["python", "-m", "notifications"]
+    restart: unless-stopped
+    stop_grace_period: 2m
+    env_file:
+      - .env
+    environment:
+      <<: *runtime
     depends_on:
       postgres:
         condition: service_healthy
@@ -94,41 +93,6 @@ services:
     volumes:
       - minio_data:/data
 
-  rabbitmq:
-    image: docker.io/rabbitmq:3-management
-    environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-      RABBITMQ_ERLANG_COOKIE: "secret_cookie"
-      HOME: /tmp
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.cpu
-    entrypoint: ["python", "worker.py"]
-    env_file:
-      - .env
-    environment:
-      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      app:
-        condition: service_started
-
 volumes:
   minio_data:
-<<<<<<< HEAD
   postgres_data:
-=======
-  rabbitmq_data:
->>>>>>> origin/develop
