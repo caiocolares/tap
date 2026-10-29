@@ -1,7 +1,7 @@
 import importlib
-from pathlib import Path
 
 import pytest
+from minio.error import S3Error
 
 import storage
 
@@ -42,6 +42,36 @@ class TestStorageEnabled:
 
 
 class TestGetClient:
+    @pytest.mark.parametrize("code", ["BucketAlreadyOwnedByYou", "AccessDenied"])
+    def test_handles_bucket_creation_race_without_hiding_other_errors(self, monkeypatch, reload_storage, code):
+        monkeypatch.setenv("MINIO_ENDPOINT", "minio:9000")
+        mod = reload_storage()
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def bucket_exists(self, bucket):
+                return False
+
+            def make_bucket(self, bucket):
+                raise S3Error(
+                    response=None,
+                    code=code,
+                    message="simulated",
+                    resource="/bucket",
+                    request_id="request",
+                    host_id="host",
+                )
+
+        monkeypatch.setattr(mod, "Minio", FakeClient)
+        if code == "BucketAlreadyOwnedByYou":
+            assert isinstance(mod._get_client(), FakeClient)
+        else:
+            with pytest.raises(S3Error):
+                mod._get_client()
+            assert mod._client is None
+
     def test_creates_bucket_when_missing(self, monkeypatch, reload_storage):
         monkeypatch.setenv("MINIO_ENDPOINT", "minio:9000")
         monkeypatch.setenv("MINIO_BUCKET", "audio-to-text")

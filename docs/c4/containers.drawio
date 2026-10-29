@@ -1,0 +1,59 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net">
+  <diagram id="containers" name="containers">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" page="1" pageWidth="1169" pageHeight="827">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="boundary" value="T.A.P. — fronteira do sistema" style="rounded=0;dashed=1;fillColor=none;strokeColor=#999999;verticalAlign=top;align=left;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="230" y="80" width="640" height="600" as="geometry" />
+        </mxCell>
+        <mxCell id="person" value="&lt;b&gt;Consumidor&lt;/b&gt;&lt;br&gt;[Person]&lt;br&gt;Envia áudio e consulta resultado" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#08427B;fontColor=#ffffff;strokeColor=#ffffff;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="10" y="140" width="180" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="api" value="&lt;b&gt;API&lt;/b&gt;&lt;br&gt;[Container: Python/FastAPI]&lt;br&gt;Upload, fila e polling" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#438DD5;fontColor=#ffffff;strokeColor=#ffffff;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="270" y="130" width="220" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="worker" value="&lt;b&gt;Worker&lt;/b&gt;&lt;br&gt;[Container: Python + IA]&lt;br&gt;Reserva, heartbeat e inferência" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#438DD5;fontColor=#ffffff;strokeColor=#ffffff;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="270" y="360" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="db" value="&lt;b&gt;PostgreSQL&lt;/b&gt;&lt;br&gt;[Container: Database]&lt;br&gt;Jobs, fila, tentativas e reservas" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#438DD5;fontColor=#ffffff;strokeColor=#ffffff;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="620" y="130" width="220" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="store" value="&lt;b&gt;MinIO / S3&lt;/b&gt;&lt;br&gt;[Container: Object Storage]&lt;br&gt;Áudios e resultados por tentativa" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#438DD5;fontColor=#ffffff;strokeColor=#ffffff;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="620" y="360" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="cli" value="&lt;b&gt;CLI&lt;/b&gt;&lt;br&gt;[Container: Python + IA]&lt;br&gt;Inferência e arquivos locais" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#438DD5;fontColor=#ffffff;strokeColor=#ffffff;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="270" y="550" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="hf" value="&lt;b&gt;Hugging Face&lt;/b&gt;&lt;br&gt;[External Software System]&lt;br&gt;Modelos de IA" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#999999;fontColor=#ffffff;strokeColor=#ffffff;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="930" y="500" width="200" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-0" value="HTTP: áudio / polling / resultado" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#555555;fontColor=#333333;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="person" target="api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-1" value="SQL: enfileira e consulta" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#555555;fontColor=#333333;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="api" target="db">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-2" value="S3: upload e download" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#555555;fontColor=#333333;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="api" target="store">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-3" value="SQL: reserva, renova e conclui" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#555555;fontColor=#333333;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="worker" target="db">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-4" value="S3: lê áudio e grava resultado" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#555555;fontColor=#333333;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="worker" target="store">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-5" value="Arquivo local" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#555555;fontColor=#333333;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="person" target="cli">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-6" value="HTTPS: modelos" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#555555;fontColor=#333333;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="worker" target="hf">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-7" value="HTTPS: modelos" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#555555;fontColor=#333333;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="cli" target="hf">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

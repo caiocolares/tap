@@ -1,6 +1,8 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -34,10 +36,7 @@ class TestWriteTxt:
         transcribe.write_txt(segments, output_path)
 
         content = output_path.read_text(encoding="utf-8")
-        assert content == (
-            "[pessoa1] 00:00:00 - 00:00:04: Olá, tudo bem?\n"
-            "[pessoa2] 00:00:05 - 00:00:08: Tudo ótimo!"
-        )
+        assert content == ("[pessoa1] 00:00:00 - 00:00:04: Olá, tudo bem?\n[pessoa2] 00:00:05 - 00:00:08: Tudo ótimo!")
 
     def test_omits_prefix_when_speaker_is_none(self, tmp_path):
         segments = [Segment(start=0.0, end=1.0, text="Sem diarização")]
@@ -112,7 +111,7 @@ class TestToWav:
     def test_converts_successfully(self, monkeypatch):
         captured = {}
 
-        def fake_run(cmd, capture_output, text):
+        def fake_run(cmd, **kwargs):
             captured["cmd"] = cmd
             return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
 
@@ -129,13 +128,56 @@ class TestToWav:
             wav_path.unlink(missing_ok=True)
 
     def test_raises_runtime_error_and_cleans_up_on_ffmpeg_failure(self, monkeypatch):
-        def fake_run(cmd, capture_output, text):
+        def fake_run(cmd, **kwargs):
             return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="erro do ffmpeg")
 
         monkeypatch.setattr(subprocess, "run", fake_run)
 
         with pytest.raises(RuntimeError, match="erro do ffmpeg"):
             transcribe.to_wav(Path("/tmp/entrada.mp3"))
+
+    def test_closes_descriptor_before_invoking_ffmpeg(self, monkeypatch):
+        created = {}
+        original_mkstemp = transcribe.tempfile.mkstemp
+
+        def tracked_mkstemp(**kwargs):
+            fd, name = original_mkstemp(**kwargs)
+            created["fd"] = fd
+            return fd, name
+
+        def fake_run(cmd, **kwargs):
+            with pytest.raises(OSError):
+                os.fstat(created["fd"])
+            return subprocess.CompletedProcess(cmd, returncode=0)
+
+        monkeypatch.setattr(transcribe.tempfile, "mkstemp", tracked_mkstemp)
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        output = transcribe.to_wav(Path("audio.mp3"))
+        output.unlink()
+
+    @pytest.mark.parametrize("failure", [FileNotFoundError(), subprocess.TimeoutExpired("ffmpeg", 300)])
+    def test_cleans_partial_output_when_ffmpeg_cannot_finish(self, failure, tmp_path, monkeypatch):
+        original_mkstemp = transcribe.tempfile.mkstemp
+        monkeypatch.setattr(transcribe.tempfile, "mkstemp", lambda **kwargs: original_mkstemp(dir=tmp_path, **kwargs))
+
+        def fail(cmd, **kwargs):
+            Path(cmd[-1]).write_bytes(b"partial wav")
+            raise failure
+
+        monkeypatch.setattr(subprocess, "run", fail)
+        with pytest.raises(RuntimeError):
+            transcribe.to_wav(Path("audio.mp3"))
+        assert list(tmp_path.iterdir()) == []
+
+    def test_applies_configured_ffmpeg_timeout(self, monkeypatch):
+        monkeypatch.setenv("FFMPEG_TIMEOUT_SECONDS", "7")
+
+        def fake_run(cmd, **kwargs):
+            assert kwargs["timeout"] == 7
+            return subprocess.CompletedProcess(cmd, returncode=0)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        transcribe.to_wav(Path("audio.mp3")).unlink()
 
 
 class TestTranscribeFn:
@@ -158,6 +200,10 @@ class TestTranscribeFn:
 
 
 class TestDiarize:
+    @pytest.fixture(autouse=True)
+    def stub_audio_reader(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "torchaudio", SimpleNamespace(load=lambda path: ("waveform", 16000)))
+
     def test_returns_turns_sorted_by_start(self):
         class FakeTrack:
             def __init__(self, start, end):
@@ -219,6 +265,10 @@ class TestLoadWhisperModel:
 
 
 class TestLoadDiarizationPipeline:
+    @pytest.fixture(autouse=True)
+    def stub_torch(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(device=lambda name: name))
+
     def test_loads_pipeline_and_moves_to_cuda_when_requested(self, monkeypatch):
         calls = {"to_device": None}
 

@@ -1,0 +1,14 @@
+# MinIO Community é distribuído como fonte; usa a última release de segurança
+# publicada no repositório oficial, em vez de depender das imagens removidas.
+FROM docker.io/library/golang:1.24.8-bookworm AS builder
+RUN CGO_ENABLED=0 go install github.com/minio/minio@RELEASE.2025-10-15T17-29-55Z
+
+FROM docker.io/library/debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir /data && chown 1000:0 /data
+COPY --from=builder /go/bin/minio /usr/local/bin/minio
+USER 1000:0
+EXPOSE 9000 9001
+ENTRYPOINT ["minio"]
+CMD ["server", "/data", "--console-address", ":9001"]

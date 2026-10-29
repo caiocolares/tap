@@ -1,38 +1,80 @@
+x-runtime: &runtime
+  JOBS_DATABASE_URL: postgresql://${POSTGRES_USER:-tap}:${POSTGRES_PASSWORD:-tap_local}@postgres:5432/${POSTGRES_DB:-tap}
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+  MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+  MINIO_BUCKET: ${MINIO_BUCKET:-audio-to-text}
+  MINIO_SECURE: "false"
+
 services:
   app:
     build:
       context: .
-      dockerfile: Dockerfile.cpu
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
     ports:
       - "8000:8000"
     env_file:
       - .env
     environment:
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MINIO_BUCKET: ${MINIO_BUCKET:-audio-to-text}
-      MINIO_SECURE: "false"
+      <<: *runtime
+      API_ASYNC_ONLY: "true"
     depends_on:
-      minio:
+      postgres:
         condition: service_healthy
+      minio:
+        condition: service_started
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    entrypoint: ["python", "-m", "worker"]
+    restart: unless-stopped
+    stop_grace_period: 10m
+    env_file:
+      - .env
+    environment:
+      <<: *runtime
+      WHISPER_DEVICE: cpu
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  postgres:
+    image: docker.io/library/postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tap}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tap_local}
+      POSTGRES_DB: ${POSTGRES_DB:-tap}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
+    build:
+      context: .
+      dockerfile: Dockerfile.minio
+    restart: unless-stopped
+    command: server /data --console-address :9001
     ports:
-      - "9000:9000"   # API S3
-      - "9001:9001"   # Console web
+      - "9000:9000"
+      - "9001:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
       - minio_data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
 
 volumes:
   minio_data:
+  postgres_data:

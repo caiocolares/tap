@@ -27,7 +27,7 @@ Transcreve um arquivo de áudio (mp3, wav, etc.) para texto usando [faster-whisp
   - [API Assíncrona (Arquivos Grandes)](#api-assíncrona-arquivos-grandes)
 - [Performance: CPU vs GPU (Metal)](#performance-cpu-vs-gpu-metal)
 - [Docker](#docker)
-  - [Docker Compose (app + MinIO)](#docker-compose-app--minio)
+  - [Docker Compose (API, worker, PostgreSQL e MinIO)](#docker-compose-api-worker-postgresql-e-minio)
   - [OpenShift (Knative Serving)](#openshift-knative-serving)
 - [Saída](#saída)
 - [Troubleshooting / FAQ](#troubleshooting--faq)
@@ -87,6 +87,31 @@ uv run pytest
 ```
 
 Isso já roda com cobertura habilitada (configurado em `pyproject.toml`): um resumo aparece no terminal e um relatório HTML detalhado é gerado em `htmlcov/index.html`.
+
+Para desenvolver e testar sem instalar Torch, Whisper ou Pyannote, use o grupo leve de desenvolvimento. Os testes substituem também os leitores de áudio e as chamadas ao storage:
+
+```bash
+uv sync --locked --only-group dev
+uv run --no-sync ruff check .
+uv run --no-sync ruff format --check .
+uv run --no-sync pytest
+```
+
+Use `uv run --no-sync ruff format .` para formatar. Antes de executar transcrições reais, rode `uv sync --locked` para instalar novamente as dependências de execução. A CI executa lint, formatação e testes com Python 3.13.
+
+O smoke test marcado como `integration` valida a conversão real quando ffmpeg está instalado; caso contrário, ele é ignorado. Use `uv run --no-sync pytest -m "not integration"` para executar somente os testes sem ferramentas externas.
+
+Para integração com serviços reais, use um banco PostgreSQL **exclusivo de testes** (a fixture limpa `tap_jobs`) e um endpoint MinIO. O teste cria e remove um bucket temporário:
+
+```bash
+TAP_TEST_DATABASE_URL=postgresql://tap_test:tap_test@localhost:55432/tap_test \
+TAP_TEST_MINIO_ENDPOINT=localhost:59000 \
+TAP_TEST_MINIO_ACCESS_KEY=tap_test \
+TAP_TEST_MINIO_SECRET_KEY=tap_test_secret \
+uv run --no-sync pytest
+```
+
+Sem essas variáveis, testes de infraestrutura são ignorados. A CI fornece ambos os serviços e verifica recuperação após encerramento abrupto de um worker; a inferência nesse teste é simulada.
 
 ## Uso via CLI
 
@@ -162,7 +187,7 @@ uv run uvicorn server:app --host 0.0.0.0 --port 8000
 
 > Alternativa a setar a variável na linha de comando: copie `.env.example` para `.env` e defina `WHISPER_DEVICE` lá — é lido automaticamente em qualquer SO, inclusive no Windows.
 
-Configuração via variáveis de ambiente (todas opcionais, também lidas do `.env`):
+Configuração via variáveis de ambiente, também lidas do `.env`. PostgreSQL e MinIO são obrigatórios para a API assíncrona; para usar somente a CLI/rota síncrona sem banco, deixe `JOBS_DATABASE_URL` vazio:
 
 | Variável | Default | Descrição |
 |---|---|---|
@@ -170,15 +195,31 @@ Configuração via variáveis de ambiente (todas opcionais, também lidas do `.e
 | `WHISPER_DEVICE` | `cpu` | `cpu`, `cuda` (GPU NVIDIA) ou `mps` (GPU Apple Silicon via Metal — CTranslate2 não suporta MPS, então só a diarização roda na GPU; o Whisper continua em CPU/int8) |
 | `WHISPER_LANGUAGE` | detecção automática | Código do idioma (ex: `pt`) |
 | `HF_TOKEN` | — | Se definido, habilita a diarização; se ausente, o servidor transcreve normalmente sem identificar speakers |
-| `MINIO_ENDPOINT` | — | Endpoint do MinIO/S3 (ex: `localhost:9000`). Se ausente, o resultado dos jobs assíncronos fica só no disco local do processo |
+| `MINIO_ENDPOINT` | — | Endpoint do MinIO/S3 (ex: `localhost:9000`). Obrigatório para a API assíncrona; entradas e resultados ficam no bucket compartilhado |
 | `MINIO_ACCESS_KEY` | — | Access key do MinIO/S3 |
 | `MINIO_SECRET_KEY` | — | Secret key do MinIO/S3 |
 | `MINIO_BUCKET` | `audio-to-text` | Bucket onde o resultado dos jobs assíncronos é gravado (criado automaticamente se não existir) |
 | `MINIO_SECURE` | `false` | `true` para usar TLS (HTTPS) na conexão com o MinIO/S3 |
+| `MAX_UPLOAD_BYTES` | `104857600` | Limite de upload (100 MiB), conferido durante o streaming mesmo sem `Content-Length` |
+| `MAX_PENDING_JOBS` | `8` | Máximo de uploads/transcrições síncronas simultâneos por processo da API |
+| `FFMPEG_TIMEOUT_SECONDS` | `300` | Tempo máximo de conversão do áudio pelo ffmpeg |
+| `JOB_TTL_SECONDS` | `3600` | Retenção dos metadados no banco após conclusão ou falha definitiva |
+| `JOB_CLEANUP_INTERVAL_SECONDS` | `60` | Intervalo entre limpezas dos metadados expirados |
+| `JOBS_DATABASE_URL` | — | URL PostgreSQL compartilhada pela API e pelos workers |
+| `MAX_QUEUED_JOBS` | `100` | Limite global de jobs pendentes, contando fila e processamento |
+| `JOB_MAX_ATTEMPTS` | `3` | Máximo de tentativas por job, incluindo recuperação após quedas |
+| `JOB_LEASE_SECONDS` | `60` | Validade da reserva de um job pelo worker |
+| `JOB_HEARTBEAT_SECONDS` | `10` | Intervalo de renovação; deve ser menor que a reserva |
+| `JOB_RETRY_SECONDS` | `5` | Base do intervalo exponencial entre tentativas, limitado a 300s |
+| `WORKER_POLL_SECONDS` | `1` | Espera do worker quando não há jobs disponíveis |
+| `API_ASYNC_ONLY` | `false` | Desabilita inferência local; `Dockerfile.api` e Compose definem `true` |
+
+As configurações são carregadas antes da inicialização do storage; variáveis do ambiente têm precedência sobre `.env`. Limites devem ser inteiros positivos. Uploads excessivos retornam `413`; falta de capacidade retorna `503` com `Retry-After`.
 
 ### Endpoints
 
-- `GET /health` — liveness/readiness check, retorna `{"status": "ok"}`.
+- `GET /health` — liveness, retorna `{"status": "ok"}`.
+- `GET /ready` — prontidão; verifica PostgreSQL e MinIO quando a fila está configurada.
 - `POST /transcricao/{formato}` — recebe o áudio (mp3, wav, etc.) como corpo bruto da requisição e devolve o arquivo com a transcrição. `formato` é `txt` ou `json` (qualquer outro valor retorna `422`).
 
 Exemplo com `curl`:
@@ -203,22 +244,35 @@ curl -X POST \
 
 ### API Assíncrona (Arquivos Grandes)
 
-Para evitar *timeouts* de conexão em áudios longos, o sistema suporta processamento assíncrono (modelo de *Polling*). O servidor agenda o trabalho em *background* e devolve um `job_id` imediatamente.
+A API assíncrona exige `JOBS_DATABASE_URL`, `MINIO_ENDPOINT` e pelo menos um worker ativo. Não há fallback em memória. A CLI e a rota síncrona das imagens completas continuam disponíveis sem PostgreSQL.
 
-1. **Despachar o Job**:
+A API recebe o áudio por streaming, grava no MinIO e insere um job na fila PostgreSQL. O registro e o enfileiramento são uma única transação. A API só confirma a submissão após o commit; nenhum modelo é executado nessa rota.
+
+1. **Despachar o job**:
    ```bash
    curl -X POST --data-binary @audio.mp3 -H "Content-Type: audio/mpeg" \
      http://localhost:8000/async/transcricao/txt
    ```
-   *Retorno*: `{"job_id": "8f3...a9b", "status": "processing"}`
+   O contrato existente é preservado: HTTP `200` com `{"job_id": "...", "status": "processing"}`. Internamente, o estado inicial é `queued`.
 
-2. **Consultar o Status / Baixar o Resultado**:
-   Enquanto estiver processando, o retorno será um JSON (`{"job_id": "...", "status": "processing"}`). Quando concluir, o download do arquivo inicia automaticamente.
+2. **Consultar ou baixar o resultado**:
    ```bash
    curl -JLO http://localhost:8000/async/status/{job_id}
    ```
+   Jobs em fila ou execução retornam JSON com `processing`. Ao concluir, a mesma rota retorna o arquivo; uma falha definitiva retorna `500` com mensagem genérica.
 
-Se `MINIO_ENDPOINT` estiver configurado, o áudio original é gravado no bucket MinIO/S3 antes de iniciar o processamento, e o resultado também é gravado lá ao final — em vez de ficarem só no disco local do processo. Ver [Docker Compose (app + MinIO)](#docker-compose-app--minio).
+3. **Executar o worker fora de contêiner**:
+   ```bash
+   uv sync --locked
+   uv run python -m worker
+   ```
+   Use as mesmas configurações de PostgreSQL e MinIO da API. Para diarização, injete `HF_TOKEN` tanto na API quanto no worker; credenciais não são persistidas no job. Modelo, idioma e opção de diarização são registrados na submissão. `WHISPER_DEVICE` é definido em cada worker.
+
+Cada worker reserva um job, renova a reserva durante a inferência e confirma a conclusão com seu token. Se morrer, outro worker recupera a reserva vencida e repete o processamento. As tentativas são limitadas e usam espera exponencial. Resultados têm uma chave por tentativa: workers antigos não sobrescrevem o resultado vigente. A execução é **pelo menos uma vez**, sem promessa de execução única; reenviar o POST cria outro job.
+
+O resultado pode ser baixado repetidamente durante `JOB_TTL_SECONDS`. Depois do prazo, retorna `410` até a remoção dos metadados e `404` após a limpeza. Configure lifecycle do bucket para expurgar áudios, resultados e uploads órfãos, com prazo suficiente para fila, tentativas e retenção. Em falha ambígua no commit, o upload é preservado para não quebrar um job já confirmado.
+
+As migrações em `migrations/` são aplicadas automaticamente na inicialização da API e dos workers, sob trava PostgreSQL. Use volume persistente e backups para PostgreSQL e MinIO. Detalhes em [docs/DAS.md](docs/DAS.md) e na [ADR-0001](docs/adr/0001-fila-duravel-de-transcricao-no-postgresql.md).
 
 A documentação interativa (Swagger UI) completa fica disponível em `http://localhost:8000/docs`.
 
@@ -250,8 +304,10 @@ Tempo total caiu de **1m18s para 24s** (~3,25x mais rápido) só acelerando a di
 
 ## Docker
 
-Duas imagens são fornecidas — ambas rodam o servidor HTTP por padrão (`ENTRYPOINT` = uvicorn, porta `8000`):
+As imagens CPU/GPU completas rodam o servidor HTTP por padrão (`ENTRYPOINT` = uvicorn, porta `8000`) e também podem executar o worker:
 
+- `Dockerfile.api`: API assíncrona leve, sem Torch/Whisper/Pyannote; a rota síncrona retorna `503`.
+- `Dockerfile.minio`: compila uma release fixa do código oficial do MinIO Community, pois as imagens públicas anteriores deixaram de estar disponíveis.
 - `Dockerfile.cpu`: usa a build CPU-only do PyTorch, mais leve. Use quando os nós não têm GPU.
 - `Dockerfile.gpu`: usa a build do PyTorch com suporte CUDA. Requer nó com GPU NVIDIA, driver instalado e `--gpus all` (Docker) ou NVIDIA device plugin (k8s).
 
@@ -289,30 +345,32 @@ docker run --rm --entrypoint python -v "$PWD/dados:/data" \
   audio-to-text:cpu transcribe.py /data/audio.mp3 --output /data/resultado
 ```
 
-### Docker Compose (app + MinIO)
+### Docker Compose (API, worker, PostgreSQL e MinIO)
 
-`docker-compose.yml` sobe o servidor (build de `Dockerfile.cpu`) junto com um container do [MinIO](https://min.io/) — object storage compatível com S3 usado para persistir o resultado dos jobs assíncronos (ver [API Assíncrona](#api-assíncrona-arquivos-grandes) e `TODO.md`, Nível 3).
+O Compose sobe a API leve, um worker CPU, PostgreSQL e MinIO, com volumes para os dados persistentes. O primeiro build do MinIO compila o código oficial da release `RELEASE.2025-10-15T17-29-55Z` ([fonte e licença](https://github.com/minio/minio/tree/RELEASE.2025-10-15T17-29-55Z)).
 
 ```bash
-cp .env.example .env   # se ainda não existir; preencha ao menos o HF_TOKEN
+# Se .env ainda não existir, copie .env.example e ajuste os valores.
 docker compose up --build
 ```
 
-- App: `http://localhost:8000` (mesmos endpoints de sempre)
-- Console web do MinIO: `http://localhost:9001` (login `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`, default `minioadmin`/`minioadmin`)
-- API S3 do MinIO: `http://localhost:9000`
+- API assíncrona e Swagger: `http://localhost:8000` e `/docs`.
+- MinIO: S3 em `http://localhost:9000`; console em `http://localhost:9001`.
+- PostgreSQL: `localhost:5432`; credenciais locais no `.env.example`.
+- Para adicionar consumidores: `docker compose up -d --scale worker=2`.
 
-O `docker-compose.yml` já injeta `MINIO_ENDPOINT=minio:9000` no container do `app`, então o bucket (`MINIO_BUCKET`, default `audio-to-text`) é criado automaticamente na primeira execução. Para rodar sem MinIO (comportamento original, resultado só em disco local), use `docker run` como nos exemplos acima em vez do compose.
+A imagem leve não atende transcrição síncrona. Para manter essa rota, execute uma imagem CPU/GPU completa com `API_ASYNC_ONLY=false`, conforme os exemplos anteriores. Os serviços recebem as mesmas configurações de banco e storage; jobs sobrevivem à troca de processos e contêineres, desde que os volumes permaneçam. Não remova volumes ao reiniciar o ambiente se precisar preservar trabalhos.
 
 ### OpenShift (Knative Serving)
 
-`knative-service.yaml` traz os recursos `serving.knative.dev/v1 Service` (CPU e GPU) para deploy via OpenShift Serverless — inclui autoscaling (com scale-to-zero), probes em `/health` e injeção opcional do `HF_TOKEN` via Secret. Instruções completas de pré-requisitos e uso estão nos comentários do próprio arquivo:
+Aplique `knative-service.yaml` para a API leve e **um** dos deployments em `deploy/worker-cpu.yaml` ou `deploy/worker-gpu.yaml`, após ajustar as imagens. Configure o Secret `tap-runtime` com `JOBS_DATABASE_URL`, `MINIO_ENDPOINT`, credenciais, bucket, TLS e `HF_TOKEN` quando necessário. PostgreSQL e storage devem ser compartilhados e persistentes.
 
 ```bash
-oc create secret generic audio-to-text-hf-token --from-literal=HF_TOKEN=hf_xxx  # opcional
 oc apply -f knative-service.yaml
-oc get ksvc audio-to-text -o jsonpath='{.status.url}{"\n"}'
+oc apply -f deploy/worker-cpu.yaml
 ```
+
+A API pode escalar a zero e ter várias réplicas. Workers são Deployments independentes, sem scale-to-zero por ausência de tráfego HTTP. Cada processo executa uma inferência por vez; para GPU, reserve uma GPU por pod. Em encerramento normal, o worker tenta concluir o trabalho atual; em queda abrupta, a reserva expira e outro worker o retoma.
 
 ## Saída
 

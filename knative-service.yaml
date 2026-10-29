@@ -1,130 +1,43 @@
-# Deploy no OpenShift via Knative Serving (operador "Red Hat OpenShift
-# Serverless"). Contém dois recursos serving.knative.dev/v1 Service:
-#   - audio-to-text      (imagem CPU, Dockerfile.cpu) — aplique este por padrão
-#   - audio-to-text-gpu   (imagem GPU, Dockerfile.gpu) — só em clusters com
-#     NVIDIA GPU Operator + nós com GPU; remova/comente se não for usar
-#
-# Pré-requisitos:
-#   - Operador OpenShift Serverless instalado (fornece o CRD Service acima)
-#   - Imagem publicada em um registry acessível pelo cluster — troque o
-#     campo `image` pela sua (ex.: image-registry.openshift-image-registry.
-#     svc:5000/<namespace>/audio-to-text:cpu, ou um registry externo)
-#   - Secret opcional com o token do Hugging Face (só necessário para
-#     habilitar a diarização de speakers):
-#       oc create secret generic audio-to-text-hf-token \
-#         --from-literal=HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-#
-# Apply:
-#   oc apply -f knative-service.yaml
-#
-# A Route pública é criada automaticamente pelo Knative — depois do apply,
-# obtenha a URL com:
-#   oc get ksvc audio-to-text -o jsonpath='{.status.url}{"\n"}'
-#
-# Teste:
-#   curl -X POST --data-binary @audio.mp3 "$(oc get ksvc audio-to-text -o jsonpath='{.status.url}')/transcricao/txt" -o resultado.txt
-
+# API leve. Requer PostgreSQL e S3/MinIO externos e ao menos um worker ativo.
+# Crie o Secret tap-runtime com JOBS_DATABASE_URL, MINIO_ENDPOINT,
+# MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET, MINIO_SECURE e HF_TOKEN
+# (HF_TOKEN opcional; use a mesma configuração nos workers).
+# Publique Dockerfile.api e ajuste a imagem antes de aplicar.
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   name: audio-to-text
-  labels:
-    app: audio-to-text
 spec:
   template:
     metadata:
       annotations:
-        # Cold start recarrega o modelo Whisper (e o pipeline de diarização,
-        # se HF_TOKEN estiver definido) do zero — pode levar dezenas de
-        # segundos. Em produção, considere minScale: "1" para evitar isso
-        # (o serviço nunca escala a zero, ficando sempre com o modelo "quente").
         autoscaling.knative.dev/minScale: "0"
         autoscaling.knative.dev/maxScale: "3"
     spec:
-      # server.py serializa a inferência (Whisper/pyannote não são
-      # thread-safe numa mesma instância) — com concurrency 1, o Knative
-      # escala horizontalmente em vez de enfileirar requisições no pod.
-      containerConcurrency: 1
-      timeoutSeconds: 600 # áudios longos podem passar do default (300s)
-      containers:
-        - image: image-registry.example.com/<namespace>/audio-to-text:cpu # troque pela sua imagem
-          ports:
-            - containerPort: 8000
-          env:
-            - name: WHISPER_MODEL
-              value: "medium" # tiny/base/small/medium/large-v3
-            - name: WHISPER_DEVICE
-              value: "cpu"
-            - name: HF_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: audio-to-text-hf-token
-                  key: HF_TOKEN
-                  optional: true # sem o secret, o serviço transcreve sem identificar speakers
-          resources:
-            # Ponto de partida para o modelo "medium"; ajuste conforme
-            # WHISPER_MODEL (modelos maiores exigem mais memória).
-            requests:
-              cpu: "1"
-              memory: 2Gi
-            limits:
-              cpu: "2"
-              memory: 4Gi
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 10
-
----
-apiVersion: serving.knative.dev/v1
-kind: Service
-metadata:
-  name: audio-to-text-gpu
-  labels:
-    app: audio-to-text
-spec:
-  template:
-    metadata:
-      annotations:
-        autoscaling.knative.dev/minScale: "0"
-        autoscaling.knative.dev/maxScale: "2" # normalmente limitado pela quantidade de GPUs do cluster
-    spec:
-      containerConcurrency: 1
+      containerConcurrency: 8
       timeoutSeconds: 600
       containers:
-        - image: image-registry.example.com/<namespace>/audio-to-text:gpu # troque pela sua imagem
+        - image: image-registry.example.com/<namespace>/audio-to-text:api
           ports:
             - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: tap-runtime
           env:
-            - name: WHISPER_MODEL
-              value: "medium"
-            - name: WHISPER_DEVICE
-              value: "cuda"
-            - name: HF_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: audio-to-text-hf-token
-                  key: HF_TOKEN
-                  optional: true
+            - name: API_ASYNC_ONLY
+              value: "true"
           resources:
             requests:
-              cpu: "1"
-              memory: 4Gi
+              cpu: "100m"
+              memory: 128Mi
             limits:
-              cpu: "2"
-              memory: 8Gi
-              nvidia.com/gpu: "1" # requer NVIDIA GPU Operator + nós com GPU
+              cpu: "1"
+              memory: 512Mi
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: 8000
           livenessProbe:
             httpGet:
               path: /health
               port: 8000
-            initialDelaySeconds: 10

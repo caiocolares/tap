@@ -5,10 +5,16 @@ import os
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+from settings import load_settings
+
+
+class AudioConversionError(RuntimeError):
+    """Áudio inválido ou falha na execução do ffmpeg."""
 
 
 @dataclass
@@ -28,17 +34,28 @@ class Turn:
 
 def to_wav(input_path: Path) -> Path:
     """Converte o áudio de entrada (mp3 ou outro formato) para WAV mono 16kHz."""
-    tmp = Path(tempfile.mkstemp(suffix=".wav")[1])
-    result = subprocess.run(
-        ["ffmpeg", "-y", "-i", str(input_path), "-ac", "1", "-ar", "16000", str(tmp)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        tmp.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"Falha ao converter áudio com ffmpeg (está instalado? `brew install ffmpeg`):\n{result.stderr}"
+    timeout = load_settings().ffmpeg_timeout_seconds
+    fd, name = tempfile.mkstemp(suffix=".wav")
+    tmp = Path(name)
+    os.close(fd)
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-nostdin", "-y", "-i", str(input_path), "-ac", "1", "-ar", "16000", str(tmp)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
+        if result.returncode != 0:
+            raise AudioConversionError(f"Falha ao converter áudio com ffmpeg:\n{result.stderr}")
+    except subprocess.TimeoutExpired as exc:
+        tmp.unlink(missing_ok=True)
+        raise AudioConversionError(f"Conversão excedeu o limite de {timeout} segundos") from exc
+    except OSError as exc:
+        tmp.unlink(missing_ok=True)
+        raise AudioConversionError("Não foi possível executar o ffmpeg; verifique sua instalação") from exc
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return tmp
 
 
@@ -66,9 +83,7 @@ def load_diarization_pipeline(hf_token: str, device: str):
     import torch
     from pyannote.audio import Pipeline
 
-    pipeline = Pipeline.from_pretrained(
-        "pyannote/speaker-diarization-3.1", token=hf_token
-    )
+    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", token=hf_token)
     if device in ("cuda", "mps"):
         pipeline.to(torch.device(device))
     return pipeline
@@ -76,9 +91,10 @@ def load_diarization_pipeline(hf_token: str, device: str):
 
 def diarize(pipeline, wav_path: Path) -> list[Turn]:
     import torchaudio
+
     waveform, sample_rate = torchaudio.load(str(wav_path))
     audio_in_memory = {"waveform": waveform, "sample_rate": sample_rate}
-    
+
     diarization = pipeline(audio_in_memory)
     annotation = getattr(diarization, "speaker_diarization", diarization)
     turns = [
@@ -140,7 +156,9 @@ def main() -> None:
     parser.add_argument("--language", default=None, help="Código do idioma (ex: pt). Default: detecção automática")
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"], help="Dispositivo de inferência")
     parser.add_argument("--no-diarization", action="store_true", help="Pula a identificação de speakers")
-    parser.add_argument("--output", type=Path, default=None, help="Caminho de saída (sem extensão). Default: nome do áudio")
+    parser.add_argument(
+        "--output", type=Path, default=None, help="Caminho de saída (sem extensão). Default: nome do áudio"
+    )
     args = parser.parse_args()
 
     if not args.audio.exists():
