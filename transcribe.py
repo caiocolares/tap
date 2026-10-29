@@ -152,7 +152,7 @@ def write_json(segments: list[Segment], output_path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Transcreve um arquivo de áudio e identifica speakers.")
     parser.add_argument("audio", type=Path, help="Caminho do arquivo de áudio (mp3, wav, etc.)")
-    parser.add_argument("--model", default="medium", help="Tamanho do modelo Whisper (tiny/base/small/medium/large-v3)")
+    parser.add_argument("--model", default="small", help="Tamanho do modelo Whisper (tiny/base/small/medium/large-v3)")
     parser.add_argument("--language", default=None, help="Código do idioma (ex: pt). Default: detecção automática")
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"], help="Dispositivo de inferência")
     parser.add_argument("--no-diarization", action="store_true", help="Pula a identificação de speakers")

@@ -11,13 +11,14 @@
   ![MinIO](https://img.shields.io/badge/MinIO-C72E49.svg?style=flat&logo=minio&logoColor=white)
   ![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=flat&logo=docker&logoColor=white)
 
-  ### Transcrição tirada na pressão — sem espuma, sem ruído.
+  ### Transcrição de áudio com IA — extraindo falas e separando palestrantes.
 </div>
 
-Transcreve um arquivo de áudio (mp3, wav, etc.) para texto usando [faster-whisper](https://github.com/SYSTRAN/faster-whisper) e identifica quem está falando (`pessoa1`, `pessoa2`, ...) usando [pyannote.audio](https://github.com/pyannote/pyannote-audio).
+O T.A.P. é um motor inteligente para transformar arquivos de áudio em diálogos estruturados. Ele utiliza o [faster-whisper](https://github.com/SYSTRAN/faster-whisper) para reconhecer as falas e o [pyannote.audio](https://github.com/pyannote/pyannote-audio) para a "diarização" (sinalizando a troca de palestrantes como `pessoa1`, `pessoa2`).
 
-## Índice
+---
 
+<<<<<<< HEAD
 - [Escopo](#escopo)
 - [Setup](#setup)
 - [Testes](#testes)
@@ -32,62 +33,45 @@ Transcreve um arquivo de áudio (mp3, wav, etc.) para texto usando [faster-whisp
 - [Saída](#saída)
 - [Troubleshooting / FAQ](#troubleshooting--faq)
 - [Contribuidores](#contribuidores)
+=======
+## 📖 Índice
+>>>>>>> origin/develop
 
-## Escopo
+- [1. Consumindo a API (Integração)](#1-consumindo-a-api-integração)
+  - [Autenticação](#autenticação)
+  - [Transcrição (Síncrona)](#transcrição-síncrona)
+  - [Transcrição de Arquivos Grandes (Assíncrona)](#transcrição-de-arquivos-grandes-assíncrona)
+  - [Formato da Saída](#formato-da-saída)
+- [2. Configuração e Infraestrutura (Deploy)](#2-configuração-e-infraestrutura-deploy)
+  - [Variáveis de Ambiente](#variáveis-de-ambiente)
+  - [Docker e Docker Compose](#docker-e-docker-compose)
+  - [OpenShift (Knative)](#openshift-knative)
+- [3. Instalação Local e CLI (Desenvolvedores)](#3-instalação-local-e-cli-desenvolvedores)
+- [4. Performance: CPU vs GPU](#4-performance-cpu-vs-gpu)
+- [5. Troubleshooting / FAQ](#5-troubleshooting--faq)
+- [6. Contribuidores](#6-contribuidores)
 
-O projeto resolve um problema específico: dado um áudio de uma conversa com múltiplos falantes, produzir um texto legível do diálogo, marcando a troca de speaker.
+---
 
-- **Entrada**: um arquivo de áudio (mp3, wav, etc.) — via caminho local (CLI, `transcribe.py`) ou via requisição HTTP com o áudio no corpo (body) da requisição (servidor, `server.py`).
-- **Saída**: um arquivo com o diálogo transcrito, uma linha por trecho de fala, prefixado pelo rótulo do speaker (`pessoa1`, `pessoa2`, ...) — em `.txt` (legível) ou `.json` (estruturado).
-- **Identificação de speaker é apenas diferencial, não nominal**: o objetivo não é descobrir *quem* é cada pessoa, só sinalizar quando a fala passa de um interlocutor para outro. Por isso os rótulos são genéricos (`pessoa1`, `pessoa2`) e não há reconhecimento de identidade/voz nomeada.
-- **Fora do escopo**: reconhecimento de identidade real do falante e tradução do conteúdo.
+## 1. Consumindo a API (Integração)
 
-## Setup
+A principal forma de utilizar o T.A.P. é através de sua API REST. O serviço expõe rotas otimizadas tanto para áudios curtos quanto para gravações longas. A documentação interativa (Swagger UI) está sempre disponível acessando `/docs` no seu servidor (ex: `http://localhost:8000/docs`).
 
-1. Instale o [ffmpeg](https://ffmpeg.org/) no sistema (necessário para decodificar mp3):
-   - **macOS** (via Homebrew):
-     ```bash
-     brew install ffmpeg
-     ```
-   - **Fedora Linux**:
-     ```bash
-     sudo dnf install ffmpeg
-     ```
-   - **Debian / Ubuntu**:
-     ```bash
-     sudo apt update && sudo apt install ffmpeg
-     ```
-   - **Windows** (via [winget](https://learn.microsoft.com/windows/package-manager/winget/) ou [Chocolatey](https://chocolatey.org/)):
-     ```powershell
-     winget install Gyan.FFmpeg
-     # ou
-     choco install ffmpeg
-     ```
-     Confirme que o `ffmpeg` ficou no `PATH` abrindo um novo terminal e rodando `ffmpeg -version`.
+### Autenticação
 
-2. Instale as dependências com [uv](https://docs.astral.sh/uv/) (cria o virtualenv `.venv` automaticamente):
-   ```bash
-   uv sync
-   ```
+Nossa API é protegida por tokens criptográficos (JWT). Você nunca precisará memorizar senhas. Basta solicitar um código de acesso para o seu e-mail, e ele valerá por 24 horas.
 
-3. Para a diarização (identificação de speakers), o pyannote exige um token do Hugging Face:
-   - Crie uma conta gratuita em https://huggingface.co
-   - Gere um token (read) em https://huggingface.co/settings/tokens
-   - Aceite os termos dos dois modelos gated:
-     - https://huggingface.co/pyannote/speaker-diarization-3.1
-     - https://huggingface.co/pyannote/segmentation-3.0
-   - Copie `.env.example` para `.env` e cole seu token em `HF_TOKEN`
-
-## Testes
-
-A suíte usa `pytest` + `pytest-cov`. Os modelos de ML (Whisper/Pyannote) e o `ffmpeg` são *stubados* nos testes — nenhum download de modelo, chamada de rede ou binário externo é necessário para rodá-la.
-
+**Passo 1: Peça o seu código de acesso**
 ```bash
-uv run pytest
+curl -X POST http://localhost:8000/auth/request-code \
+  -H "Content-Type: application/json" \
+  -d '{"email": "seu.email@exemplo.com"}'
 ```
+Você receberá em segundos um e-mail contendo o seu token.
 
-Isso já roda com cobertura habilitada (configurado em `pyproject.toml`): um resumo aparece no terminal e um relatório HTML detalhado é gerado em `htmlcov/index.html`.
+### Transcrição (Síncrona)
 
+<<<<<<< HEAD
 Para desenvolver e testar sem instalar Torch, Whisper ou Pyannote, use o grupo leve de desenvolvimento. Os testes substituem também os leitores de áudio e as chamadas ao storage:
 
 ```bash
@@ -114,84 +98,91 @@ uv run --no-sync pytest
 Sem essas variáveis, testes de infraestrutura são ignorados. A CI fornece ambos os serviços e verifica recuperação após encerramento abrupto de um worker; a inferência nesse teste é simulada.
 
 ## Uso via CLI
+=======
+Com o seu token em mãos, você já pode solicitar transcrições. Basta anexar o áudio no corpo da requisição e enviar o seu código no cabeçalho `Authorization: Bearer <TOKEN>`.
+>>>>>>> origin/develop
 
+> **Dica**: Use `--data-binary` no cURL para enviar o arquivo bruto e sem corrompimentos.
+
+**Exemplo para obter o texto legível (`.txt`)**
 ```bash
-uv run transcribe.py caminho/para/audio.mp3
+curl -X POST http://localhost:8000/transcricao/txt \
+  -H "Authorization: Bearer COLE_SEU_TOKEN_AQUI" \
+  -H "Content-Type: audio/mpeg" \
+  --data-binary @meu_audio.mp3 \
+  -o transcricao.txt
 ```
 
-Opções:
-
+**Exemplo para obter dados estruturados (`.json`)**
 ```bash
-uv run transcribe.py audio.mp3 \
-  --model medium \        # tiny/base/small/medium/large-v3 (maior = mais preciso e mais lento)
-  --language pt \         # omita para detecção automática
-  --device cpu \          # ou cuda (GPU NVIDIA) / mps (GPU Apple Silicon via Metal — só acelera a diarização)
-  --output resultado      # gera resultado.txt e resultado.json
+curl -X POST http://localhost:8000/transcricao/json \
+  -H "Authorization: Bearer COLE_SEU_TOKEN_AQUI" \
+  -H "Content-Type: audio/mpeg" \
+  --data-binary @meu_audio.mp3 \
+  -o transcricao.json
 ```
 
-Para pular a identificação de speakers (não precisa de token do HF):
+### Transcrição de Arquivos Grandes (Assíncrona)
 
+Para arquivos maiores que 5 minutos, conexões HTTP convencionais sofrem risco de cair por *Timeout* (fechamento forçado pelos provedores de internet). Pensando nisso, a API oferece a rota `/async/`.
+
+Ao usar esta rota, o servidor entra no modelo **Despacha e Esquece**. O sistema começará o trabalho no servidor inteligente e **enviará o arquivo pronto para o seu e-mail** (o mesmo e-mail que você registrou no seu token).
+
+**Despachando o trabalho:**
 ```bash
-uv run transcribe.py audio.mp3 --no-diarization
+curl -X POST http://localhost:8000/async/transcricao/txt \
+  -H "Authorization: Bearer COLE_SEU_TOKEN_AQUI" \
+  -H "Content-Type: audio/mpeg" \
+  --data-binary @podcast_longo.mp3
 ```
+*Retorno*: `{"job_id": "8f3...a9b", "status": "processing"}`
 
-## Servidor HTTP
-
-`server.py` expõe a mesma transcrição via API (FastAPI + uvicorn). O modelo Whisper e o pipeline de diarização são carregados uma vez e reaproveitados entre requisições — a primeira chamada é mais lenta (carrega o modelo), as seguintes já respondem com o modelo "quente".
-
-### Rodando por sistema operacional
-
-O comando base é sempre o mesmo; o que muda é como cada SO/terminal seta variáveis de ambiente para escolher o `WHISPER_DEVICE` (só necessário se quiser usar GPU — sem isso, roda em CPU).
-
-**macOS** (bash/zsh):
-
+Você pode aguardar que a transcrição chegue automaticamente no seu e-mail, ou verificar o status manualmente:
 ```bash
-# CPU (default)
-uv run uvicorn server:app --host 0.0.0.0 --port 8000
-
-# GPU via Metal (Apple Silicon) — só acelera a diarização, o Whisper continua em CPU (ver tabela abaixo)
-WHISPER_DEVICE=mps uv run uvicorn server:app --host 0.0.0.0 --port 8000
+curl -JLO http://localhost:8000/async/status/{job_id}
 ```
 
-**Linux** (bash/zsh):
+### Formato da Saída
 
-```bash
-# CPU (default)
-uv run uvicorn server:app --host 0.0.0.0 --port 8000
+A plataforma devolve o arquivo com marcações para identificar o turno de cada falante.
 
-# GPU NVIDIA (requer driver CUDA instalado)
-WHISPER_DEVICE=cuda uv run uvicorn server:app --host 0.0.0.0 --port 8000
+**Formato legível (.txt)**: ideal para leitura humana.
+```text
+[pessoa1] 00:00:00 - 00:00:04: Olá, tudo bem?
+[pessoa2] 00:00:05 - 00:00:08: Tudo ótimo, e você?
 ```
 
-**Windows** (PowerShell):
-
-```powershell
-# CPU (default)
-uv run uvicorn server:app --host 0.0.0.0 --port 8000
-
-# GPU NVIDIA (requer driver CUDA instalado)
-$env:WHISPER_DEVICE = "cuda"
-uv run uvicorn server:app --host 0.0.0.0 --port 8000
+**Formato estruturado (.json)**: ideal para painéis de BI, robôs e ingestão por outras IAs.
+```json
+[
+  {
+    "start": 0.0,
+    "end": 4.0,
+    "text": " Olá, tudo bem?",
+    "speaker": "pessoa1"
+  }
+]
 ```
 
-**Windows** (cmd.exe):
+---
 
-```bat
-:: CPU (default)
-uv run uvicorn server:app --host 0.0.0.0 --port 8000
+## 2. Configuração e Infraestrutura (Deploy)
 
-:: GPU NVIDIA (requer driver CUDA instalado)
-set WHISPER_DEVICE=cuda
-uv run uvicorn server:app --host 0.0.0.0 --port 8000
-```
+Esta seção é dedicada a quem vai hospedar e gerenciar a aplicação nos servidores.
 
-> Alternativa a setar a variável na linha de comando: copie `.env.example` para `.env` e defina `WHISPER_DEVICE` lá — é lido automaticamente em qualquer SO, inclusive no Windows.
+### Variáveis de Ambiente
 
+<<<<<<< HEAD
 Configuração via variáveis de ambiente, também lidas do `.env`. PostgreSQL e MinIO são obrigatórios para a API assíncrona; para usar somente a CLI/rota síncrona sem banco, deixe `JOBS_DATABASE_URL` vazio:
+=======
+Crie o arquivo `.env` (use `.env.example` como base). Todas são opcionais, exceto tokens externos.
+>>>>>>> origin/develop
 
 | Variável | Default | Descrição |
 |---|---|---|
+| `JWT_SECRET` | `super-secreto...` | **[CRÍTICO]** Chave secreta usada para assinar os tokens de autorização. Mude em produção! |
 | `WHISPER_MODEL` | `medium` | Tamanho do modelo Whisper (tiny/base/small/medium/large-v3) |
+<<<<<<< HEAD
 | `WHISPER_DEVICE` | `cpu` | `cpu`, `cuda` (GPU NVIDIA) ou `mps` (GPU Apple Silicon via Metal — CTranslate2 não suporta MPS, então só a diarização roda na GPU; o Whisper continua em CPU/int8) |
 | `WHISPER_LANGUAGE` | detecção automática | Código do idioma (ex: `pt`) |
 | `HF_TOKEN` | — | Se definido, habilita a diarização; se ausente, o servidor transcreve normalmente sem identificar speakers |
@@ -215,16 +206,46 @@ Configuração via variáveis de ambiente, também lidas do `.env`. PostgreSQL e
 | `API_ASYNC_ONLY` | `false` | Desabilita inferência local; `Dockerfile.api` e Compose definem `true` |
 
 As configurações são carregadas antes da inicialização do storage; variáveis do ambiente têm precedência sobre `.env`. Limites devem ser inteiros positivos. Uploads excessivos retornam `413`; falta de capacidade retorna `503` com `Retry-After`.
+=======
+| `WHISPER_DEVICE` | `cpu` | `cpu`, `cuda` (NVIDIA) ou `mps` (Apple Silicon — GPU acelera apenas a diarização) |
+| `HF_TOKEN` | — | Token do HuggingFace. **Habilita a identificação de pessoas**. Se omitido, ele apenas transcreve sem nomear palestrantes. |
+| `SMTP_HOST` | — | Host do servidor SMTP para envio das transcrições e tokens por e-mail |
+| `SMTP_PORT` | `587` | Porta do servidor SMTP |
+| `SMTP_USER` | — | Usuário para autenticação SMTP |
+| `SMTP_PASSWORD` | — | Senha para autenticação SMTP |
+| `SMTP_FROM` | `nao-responda...` | Endereço de remetente para e-mails disparados |
+| `MINIO_ENDPOINT` | — | Endpoint do MinIO/S3. Se omitido, jobs assíncronos ficam salvos no disco local do container. |
+| `MINIO_ACCESS_KEY` | — | Access key do MinIO/S3 |
+| `MINIO_SECRET_KEY` | — | Secret key do MinIO/S3 |
+| `MINIO_BUCKET` | `audio-to-text` | Bucket de destino dos processamentos assíncronos |
+>>>>>>> origin/develop
 
-### Endpoints
+### Docker e Docker Compose
 
+<<<<<<< HEAD
 - `GET /health` — liveness, retorna `{"status": "ok"}`.
 - `GET /ready` — prontidão; verifica PostgreSQL e MinIO quando a fila está configurada.
 - `POST /transcricao/{formato}` — recebe o áudio (mp3, wav, etc.) como corpo bruto da requisição e devolve o arquivo com a transcrição. `formato` é `txt` ou `json` (qualquer outro valor retorna `422`).
+=======
+Fornecemos builds otimizadas para processadores convencionais (`Dockerfile.cpu`) e servidores de altíssimo rendimento (`Dockerfile.gpu`).
+>>>>>>> origin/develop
 
-Exemplo com `curl`:
+Para subir o sistema rapidamente com suporte já configurado para MinIO (Object Storage S3):
+```bash
+# 1. Ajuste os segredos no arquivo `.env`
+cp .env.example .env
+
+# 2. Inicialize a Stack
+docker compose up --build -d
+```
+O servidor web da API estará disponível em `http://localhost:8000` e o console do Object Storage S3 em `http://localhost:9001`.
+
+### OpenShift (Knative)
+
+`knative-service.yaml` traz os recursos `serving.knative.dev/v1 Service` prontos para deploy Serverless via Kubernetes/OpenShift (tirando proveito de **scale-to-zero** quando a IA está ociosa).
 
 ```bash
+<<<<<<< HEAD
 # Transcrição em texto legível
 curl -X POST \
   --data-binary @audio.mp3 \
@@ -366,56 +387,71 @@ A imagem leve não atende transcrição síncrona. Para manter essa rota, execut
 Aplique `knative-service.yaml` para a API leve e **um** dos deployments em `deploy/worker-cpu.yaml` ou `deploy/worker-gpu.yaml`, após ajustar as imagens. Configure o Secret `tap-runtime` com `JOBS_DATABASE_URL`, `MINIO_ENDPOINT`, credenciais, bucket, TLS e `HF_TOKEN` quando necessário. PostgreSQL e storage devem ser compartilhados e persistentes.
 
 ```bash
+=======
+oc create secret generic audio-to-text-hf-token --from-literal=HF_TOKEN=hf_xxx
+>>>>>>> origin/develop
 oc apply -f knative-service.yaml
 oc apply -f deploy/worker-cpu.yaml
 ```
 
+<<<<<<< HEAD
 A API pode escalar a zero e ter várias réplicas. Workers são Deployments independentes, sem scale-to-zero por ausência de tráfego HTTP. Cada processo executa uma inferência por vez; para GPU, reserve uma GPU por pod. Em encerramento normal, o worker tenta concluir o trabalho atual; em queda abrupta, a reserva expira e outro worker o retoma.
 
 ## Saída
+=======
+---
+>>>>>>> origin/develop
 
-Mesmo formato tanto na CLI (`<nome>.txt`/`<nome>.json`) quanto no servidor HTTP (`resultado.txt`/`resultado.json` devolvido no corpo da resposta):
+## 3. Instalação Local e CLI (Desenvolvedores)
 
-- `.txt`: transcrição legível, uma linha por segmento, ex:
-  ```text
-  [pessoa1] 00:00:00 - 00:00:04: Olá, tudo bem?
-  [pessoa2] 00:00:05 - 00:00:08: Tudo ótimo, e você?
-  ```
-- `.json`: os mesmos segmentos em formato estruturado (`start`, `end`, `text`, `speaker`). Exemplo:
-  ```json
-  [
-    {
-      "start": 0.0,
-      "end": 4.0,
-      "text": " Olá, tudo bem?",
-      "speaker": "pessoa1"
-    },
-    {
-      "start": 5.0,
-      "end": 8.0,
-      "text": " Tudo ótimo, e você?",
-      "speaker": "pessoa2"
-    }
-  ]
-  ```
+Se você deseja debugar os modelos localmente sem usar Docker ou containers:
 
-## Troubleshooting / FAQ
+1. **Dependências do Sistema**: O software requer a biblioteca base do `ffmpeg`. Instale no seu SO (ex: `brew install ffmpeg` no Mac ou `sudo apt install ffmpeg` no Ubuntu).
+2. **Ambiente Python**: Instale os pacotes com [uv](https://docs.astral.sh/uv/):
+   ```bash
+   uv sync
+   ```
+3. **Uso via Linha de Comando**:
+   O `transcribe.py` pode ser executado diretamente para bater nos modelos de inteligência sem passar por requisições HTTP:
+   ```bash
+   uv run transcribe.py audio.mp3 --output resultado
+   ```
+   > Parâmetros adicionais incluem `--model`, `--language`, `--device` e `--no-diarization`. Digite `uv run transcribe.py --help` para ver a lista completa.
 
-**1. Erro de autenticação/acesso negado no HuggingFace**
-- **Sintoma**: Erros como `HTTPError: 401 Client Error` ou `403 Forbidden` ao inicializar a diarização (Pyannote).
-- **Solução**: Você precisa criar uma conta no HuggingFace, gerar um Token (Read), e **aceitar os termos de uso** nos dois modelos exigidos na documentação ([segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) e [speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)). Certifique-se de que a variável `HF_TOKEN` está configurada corretamente no `.env` ou ambiente.
+**Testes Automatizados:**
+A base do projeto utiliza testes _stubados_ que isolam o FFmpeg e a Rede.
+```bash
+uv run pytest
+```
 
-**2. O comando falha indicando que `ffmpeg` não foi encontrado**
-- **Sintoma**: `FileNotFoundError: [Errno 2] No such file or directory: 'ffmpeg'`
-- **Solução**: O pacote Python não embute os binários do FFmpeg. Você precisa instalá-lo no nível do sistema operacional (via `brew`, `dnf`, `apt`, etc.) e garantir que o binário `ffmpeg` esteja acessível no seu `PATH`.
+---
 
-**3. Falta de memória na GPU (CUDA OOM - Out of Memory)**
-- **Sintoma**: Erro `RuntimeError: CUDA out of memory` ao tentar transcrever um áudio via servidor ou CLI.
-- **Solução**: O modelo Whisper tem variações de tamanho. O `large-v3` ou mesmo o `medium` podem consumir mais VRAM do que a sua placa gráfica possui. Tente utilizar um modelo menor passando a opção `--model small` ou `--model base` na CLI, ou alterando a variável de ambiente `WHISPER_MODEL=small` no servidor.
+## 4. Performance: CPU vs GPU
 
-## Contribuidores
+O servidor opera perfeitamente sem placas de vídeo (o que facilita imensamente o deploy em pods Cloud genéricos). Porém, em hardwares com aceleração, o tempo desaba. Exemplo de processamento de áudio com as configurações nativas no Mac:
 
-Obrigado a todas as pessoas que já contribuíram com o T.A.P.! 🍺
+- **Somente CPU (`WHISPER_DEVICE=cpu`)**: Tempo total **1m18s**
+- **Aceleração Apple Metal (`WHISPER_DEVICE=mps`)**: Tempo total **24s** (3.2x mais rápido)
+
+---
+
+## 5. Troubleshooting / FAQ
+
+**Erro `401 Unauthorized` na API:**
+Você precisa informar o cabeçalho HTTP: `Authorization: Bearer <seu_token>`. Gere um token de 24 horas usando o endpoint `/auth/request-code`.
+
+**Erro de acesso no HuggingFace (`401` ou `403` nos logs):**
+O motor de separação de palestrantes requer aceitar um termo de uso gratuito. Crie sua conta, vá em [segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) e [speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) para assinar o termo, e gere um *Token Read*. Adicione esse token no `.env` como `HF_TOKEN`.
+
+**Erro `FileNotFoundError: No such file or directory: 'ffmpeg'`**
+O binário do FFmpeg não está instalado na máquina base. Instale-o a nível de Sistema Operacional. No container Docker, nós já resolvemos isso por você.
+
+**Erro `RuntimeError: CUDA out of memory`**
+Sua GPU (placa de vídeo) não tem VRAM suficiente para rodar o modelo configurado (`medium` ou `large-v3`). Abaixe o modelo ajustando a variável `.env` para `WHISPER_MODEL=small` ou `base`.
+
+---
+
+## 6. Contribuidores
 
 <table>
   <tr>
@@ -443,9 +479,5 @@ Quer aparecer nessa lista? Veja o [CONTRIBUTING.md](./CONTRIBUTING.md) e as [goo
 ### DTec OpenLabs
 
 *Inovação aberta, soluções reais e engenharia na prática.*
-
-Feito com 🍺 por [Caio Colares](https://github.com/caiocolares)
-
-[Reportar um problema](https://github.com/caiocolares/tap/issues) · [faster-whisper](https://github.com/SYSTRAN/faster-whisper) · [pyannote.audio](https://github.com/pyannote/pyannote-audio)
 
 </div>

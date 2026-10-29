@@ -52,6 +52,7 @@ def upload_file(object_name: str, file_path: Path) -> None:
 def download_file(object_name: str, dest_path: Path) -> None:
     _get_client().fget_object(MINIO_BUCKET, object_name, str(dest_path))
 
+<<<<<<< HEAD
 
 def delete_file(object_name: str) -> None:
     _get_client().remove_object(MINIO_BUCKET, object_name)
@@ -60,3 +61,14 @@ def delete_file(object_name: str) -> None:
 def check_connection() -> None:
     if not _get_client().bucket_exists(MINIO_BUCKET):
         raise RuntimeError("Bucket indisponível")
+=======
+def file_exists(object_name: str) -> bool:
+    from minio.error import S3Error
+    try:
+        _get_client().stat_object(MINIO_BUCKET, object_name)
+        return True
+    except S3Error as e:
+        if e.code == "NoSuchKey":
+            return False
+        raise e
+>>>>>>> origin/develop

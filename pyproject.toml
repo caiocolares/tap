@@ -12,7 +12,12 @@ dependencies = [
     "torchaudio>=2.6.0",
     "uvicorn[standard]>=0.32.0",
     "minio>=7.2.20",
+<<<<<<< HEAD
     "psycopg[binary]>=3.2.0",
+=======
+    "pyjwt>=2.13.0",
+    "pika>=1.4.2",
+>>>>>>> origin/develop
 ]
 
 [dependency-groups]
